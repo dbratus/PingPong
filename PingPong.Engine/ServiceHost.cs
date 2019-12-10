@@ -18,6 +18,8 @@ namespace PingPong.Engine
 
         private readonly List<Type> _serviceTypes = new List<Type>();
 
+        private Socket? _listeningSocket;
+
         public ServiceHost AddServiceAssembly(Assembly assembly)
         {
             _serviceTypes.AddRange(assembly.ExportedTypes.Where(t => t.Name.EndsWith("Service")));
@@ -26,22 +28,36 @@ namespace PingPong.Engine
 
         public async Task Start(int port)
         {
+            if (_listeningSocket != null)
+                throw new InvalidOperationException("Service host is already started.");
+
+            await Task.Yield();
+
             using IContainer container = BuildContainer();
             using ILifetimeScope lifetimeScope = container.BeginLifetimeScope();
             
             var dispatcher = new ServiceDispatcher(container, _serviceTypes);
-            var listenerSocket = new Socket(SocketType.Stream, ProtocolType.IP);
+            _listeningSocket = new Socket(SocketType.Stream, ProtocolType.IP);
 
             LogDispatcher();
 
-            listenerSocket.Bind(new IPEndPoint(IPAddress.Any, port));
-            listenerSocket.Listen(10);
+            _listeningSocket.Bind(new IPEndPoint(IPAddress.Any, port));
+            _listeningSocket.Listen(10);
 
-            _logger.Info("Server started. Listening {0}...", listenerSocket.LocalEndPoint.Serialize());
+            _logger.Info("Server started. Listening {0}...", _listeningSocket.LocalEndPoint.Serialize());
 
             while (true)
             {
-                Socket connectionSocket = await listenerSocket.AcceptAsync();
+                Socket connectionSocket;
+                try
+                {
+                    connectionSocket = await _listeningSocket.AcceptAsync();
+                }
+                catch (SocketException)
+                {
+                    _logger.Info("The listening socket is closed. The host is going to shutdown.");
+                    break;
+                }
 
                 _logger.Info("Client connected {0}.", connectionSocket.RemoteEndPoint.Serialize());
 
@@ -49,6 +65,8 @@ namespace PingPong.Engine
                 
                 ServeConnection(connection);
             }
+
+            LogManager.Flush();
 
             async void ServeConnection(ServerConnection connection)
             {
@@ -81,6 +99,15 @@ namespace PingPong.Engine
                         _logger.Info("  {0}", requestType.Name);
                 }
             }
+        }
+
+        public void Stop()
+        {
+            if (_listeningSocket == null)
+                throw new InvalidOperationException("Service host is not started.");
+
+            _listeningSocket.Close();
+            _listeningSocket = null;
         }
 
         private IContainer BuildContainer()

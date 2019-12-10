@@ -21,7 +21,14 @@ namespace PingPong.Server
 
             LogManager.Configuration = config;
 
-            await new ServiceHost()
+            var serviceHost = new ServiceHost();
+
+            Console.CancelKeyPress += (sender, args) => {
+                serviceHost.Stop();
+                args.Cancel = true;
+            };
+
+            await serviceHost
                 .AddServiceAssembly(typeof(PingPong.Services.ContainerPivot).Assembly)
                 .Start(9999);
         }
