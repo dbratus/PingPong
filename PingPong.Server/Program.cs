@@ -1,4 +1,6 @@
 using System;
+using System.Runtime.Loader;
+using System.Threading;
 using System.Threading.Tasks;
 using NLog;
 using NLog.Config;
@@ -22,15 +24,30 @@ namespace PingPong.Server
             LogManager.Configuration = config;
 
             var serviceHost = new ServiceHost();
+            var serviceHostStopped = new ManualResetEvent(false);
 
-            Console.CancelKeyPress += (sender, args) => {
+            // Handling SIGINT
+            Console.CancelKeyPress += (_, args) => {
                 serviceHost.Stop();
                 args.Cancel = true;
             };
 
-            await serviceHost
-                .AddServiceAssembly(typeof(PingPong.Services.ContainerPivot).Assembly)
-                .Start(9999);
+            // Handling SIGTERM
+            AssemblyLoadContext.Default.Unloading += delegate {
+                serviceHost.Stop();
+                serviceHostStopped.WaitOne();
+            };
+
+            try
+            {
+                await serviceHost
+                    .AddServiceAssembly(typeof(PingPong.Services.ContainerPivot).Assembly)
+                    .Start(9999);
+            }
+            finally
+            {
+                serviceHostStopped.Set();
+            }
         }
     }
 }
