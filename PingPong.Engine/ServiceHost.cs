@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Autofac;
 using NLog;
+using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
 {
@@ -25,7 +26,7 @@ namespace PingPong.Engine
             return this;
         }
 
-        public async Task Start(int port)
+        public async Task Start(ServiceHostConfig config)
         {
             if (_listeningSocket != null)
                 throw new InvalidOperationException("Service host is already started.");
@@ -41,10 +42,10 @@ namespace PingPong.Engine
 
                 LogDispatcher();
 
-                _listeningSocket.Bind(new IPEndPoint(IPAddress.Any, port));
+                _listeningSocket.Bind(new IPEndPoint(IPAddress.Any, config.Port));
                 _listeningSocket.Listen(10);
 
-                _logger.Info("Server started. Listening {0}...", _listeningSocket.LocalEndPoint.Serialize());
+                _logger.Info("Server started. Listening port {0}...", config.Port);
 
                 while (true)
                 {
@@ -95,11 +96,23 @@ namespace PingPong.Engine
                             _logger.Info("  {0}", requestType.Name);
                     }
                 }
+
+                IContainer BuildContainer()
+                {
+                    var containerBuilder = new ContainerBuilder();
+                    
+                    containerBuilder
+                        .RegisterTypes(_serviceTypes.ToArray())
+                        .InstancePerLifetimeScope();
+                    containerBuilder
+                        .RegisterInstance(new ServiceConfigsProvider(config.ServiceConfigs))
+                        .As<IConfig>();
+                    
+                    return containerBuilder.Build();
+                }
             }
 
             _logger.Info("Service host stopped.");
-
-            LogManager.Flush();
         }
 
         public void Stop()
@@ -110,17 +123,6 @@ namespace PingPong.Engine
                 return;
 
             socket.Close();
-        }
-
-        private IContainer BuildContainer()
-        {
-            var containerBuilder = new ContainerBuilder();
-            
-            containerBuilder
-                .RegisterTypes(_serviceTypes.ToArray())
-                .InstancePerLifetimeScope();
-            
-            return containerBuilder.Build();
         }
     }
 }

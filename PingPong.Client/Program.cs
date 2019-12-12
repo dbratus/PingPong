@@ -12,7 +12,7 @@ namespace PingPong.Client
         {
             using var connection = 
                 new ClientConnection()
-                .Connect(IPAddress.Loopback, 9999);
+                .Connect(IPAddress.Loopback, 10000);
 
             const int requestCount = 10;
             for (int i = 0; i < requestCount; ++i)
@@ -32,6 +32,10 @@ namespace PingPong.Client
 
             for (int i = 0; i < requestCount; ++i)
                 connection.Send(new WriteRequest { Message = $"Message {i}" });
+
+            connection.Send(new GetConfigValueRequest{}, (GetConfigValueResponse response, bool isError) => {
+                Console.WriteLine($"Configurable service returned '{response.Value}'.");
+            });
 
             while (connection.HasPendingRequests)
             {

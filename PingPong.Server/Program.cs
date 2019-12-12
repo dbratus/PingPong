@@ -1,5 +1,7 @@
 using System;
+using System.IO;
 using System.Runtime.Loader;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using NLog;
@@ -11,42 +13,77 @@ namespace PingPong.Server
 {
     class Program
     {
-        static async Task Main(string[] args)
+        static async Task<int> Main(string[] args)
         {
-            var config = new LoggingConfiguration();
+            ServiceHostConfig config;
+            try 
+            {
+                 config = await LoadConfig();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Failed to load config\n{ex}");
+                return 1;
+            };
 
-            var consoleErrorTarget = new ConsoleTarget("consoleInfo");
-            consoleErrorTarget.Layout = "${longdate}|${level:uppercase=true}|${logger}|${message}\n${exception:format=tostring}";
-
-            config.AddRule(LogLevel.Info, LogLevel.Fatal, new ConsoleTarget("consoleInfo"));
-            config.AddRule(LogLevel.Error, LogLevel.Fatal, consoleErrorTarget);
-
-            LogManager.Configuration = config;
+            InitLogging();
 
             var serviceHost = new ServiceHost();
             var serviceHostStopped = new ManualResetEvent(false);
 
-            // Handling SIGINT
-            Console.CancelKeyPress += (_, args) => {
-                serviceHost.Stop();
-                args.Cancel = true;
-            };
-
-            // Handling SIGTERM
-            AssemblyLoadContext.Default.Unloading += delegate {
-                serviceHost.Stop();
-                serviceHostStopped.WaitOne();
-            };
+            InitSignalHandlers();
 
             try
             {
                 await serviceHost
                     .AddServiceAssembly(typeof(PingPong.Services.ContainerPivot).Assembly)
-                    .Start(9999);
+                    .Start(config);
             }
             finally
             {
+                LogManager.Flush();
+
                 serviceHostStopped.Set();
+            }
+
+            return 0;
+
+            async Task<ServiceHostConfig> LoadConfig()
+            {
+                if (args.Length < 1)
+                    throw new ArgumentException("No configuration file specified");
+
+                using FileStream configFile = File.OpenRead(args[0]);
+
+                return await JsonSerializer.DeserializeAsync<ServiceHostConfig>(configFile);
+            }
+
+            void InitLogging()
+            {
+                var config = new LoggingConfiguration();
+
+                var consoleErrorTarget = new ConsoleTarget("consoleInfo");
+                consoleErrorTarget.Layout = "${longdate}|${level:uppercase=true}|${logger}|${message}\n${exception:format=tostring}";
+
+                config.AddRule(LogLevel.Info, LogLevel.Fatal, new ConsoleTarget("consoleInfo"));
+                config.AddRule(LogLevel.Error, LogLevel.Fatal, consoleErrorTarget);
+
+                LogManager.Configuration = config;
+            }
+
+            void InitSignalHandlers()
+            {
+                // Handling SIGINT
+                Console.CancelKeyPress += (_, args) => {
+                    serviceHost.Stop();
+                    args.Cancel = true;
+                };
+
+                // Handling SIGTERM
+                AssemblyLoadContext.Default.Unloading += delegate {
+                    serviceHost.Stop();
+                    serviceHostStopped.WaitOne();
+                };
             }
         }
     }

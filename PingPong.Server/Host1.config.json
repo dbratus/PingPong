@@ -1,0 +1,14 @@
+{
+    "Port": 10000,
+
+    "KnownHosts": [
+        "localhost:10000",
+        "localhost:10001"
+    ],
+
+    "ServiceConfigs": {
+        "PingPong.Services.ConfigurableService": {
+            "ConfigValue": "Value from config"
+        }
+    }
+}

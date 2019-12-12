@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PingPong.Messages\PingPong.Messages.csproj" />
+    <ProjectReference Include="..\PingPong.HostInterfaces\PingPong.HostInterfaces.csproj" />
   </ItemGroup>
 
   <ItemGroup>
