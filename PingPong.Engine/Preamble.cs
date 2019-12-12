@@ -6,17 +6,17 @@ namespace PingPong.Engine
     public class Preamble
     {
         [Key(0)]
-        public MessageIdMapEntry[] MessageIdMap { get; set; }
+        public MessageIdMapEntry[] MessageIdMap { get; set; } = new MessageIdMapEntry[0];
 
         [Key(1)]
-        public RequestResponseMapEntry[] RequestResponseMap { get; set; }
+        public RequestResponseMapEntry[] RequestResponseMap { get; set; } = new RequestResponseMapEntry[0];
     }
 
     [MessagePackObject]
     public class MessageIdMapEntry
     {
         [Key(0)]
-        public string MessageType { get; set; }
+        public string MessageType { get; set; } = "";
 
         [Key(1)]
         public int MessageId { get; set; }

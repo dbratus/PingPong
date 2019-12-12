@@ -6,6 +6,6 @@ namespace PingPong.Messages
     public class WriteRequest
     {
         [Key(0)]
-        public string Message { get; set; }
+        public string Message { get; set; } = "";
     }
 }

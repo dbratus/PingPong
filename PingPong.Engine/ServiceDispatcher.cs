@@ -1,9 +1,5 @@
-#nullable enable
-
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
 using Autofac;
@@ -60,12 +56,17 @@ namespace PingPong.Engine
                         _messageMap.Add(requestMessageType, requestMessageId);
                         _messageHandlersById.Add(requestMessageId, newHandler);
 
-                        int responseMessageId = responseMessageType != null ? nextMessageId++ : -1;
-
-                        if (responseMessageId > 0)
+                        if (responseMessageType != null)
+                        {
+                            int responseMessageId = nextMessageId++;
                             _messageMap.Add(responseMessageType, responseMessageId);
 
-                        requestResponseMessageMap.Add((requestMessageId, responseMessageId));
+                            requestResponseMessageMap.Add((requestMessageId, responseMessageId));
+                        }
+                        else
+                        {
+                            requestResponseMessageMap.Add((requestMessageId, -1));
+                        }
                     }
                 }
             }
