@@ -16,8 +16,20 @@ namespace PingPong.Engine
         private readonly Socket _socket;
         private readonly DelimitedMessageReader _messageReader;
         private readonly DelimitedMessageWriter _messageWriter;
-        private readonly ConcurrentQueue<(ResponseHeader Header, object? Body)> _responseQueue = 
-            new ConcurrentQueue<(ResponseHeader Header, object? Body)>();
+
+        private struct ResponseQueueEntry
+        {
+            public readonly ResponseHeader Header;
+            public readonly object? Body;
+
+            public ResponseQueueEntry(ResponseHeader header, object? body)
+            {
+                Header = header;
+                Body = body;
+            }
+        }
+        private readonly ConcurrentQueue<ResponseQueueEntry> _responseQueue = 
+            new ConcurrentQueue<ResponseQueueEntry>();
         private readonly Task _responsePropagatorTask;
         private volatile bool _stopResponsePropagator;
 
@@ -27,7 +39,10 @@ namespace PingPong.Engine
         public ServerConnection(Socket socket, ServiceDispatcher dispatcher)
         {
             _dispatcher = dispatcher;
+            
             _socket = socket;
+            _socket.NoDelay = true;
+
             _messageReader = new DelimitedMessageReader(new NetworkStream(socket, System.IO.FileAccess.Read, false));
             _messageWriter = new DelimitedMessageWriter(new NetworkStream(socket, System.IO.FileAccess.Write, false));
             _responsePropagatorTask = PropagateRequests();
@@ -103,7 +118,7 @@ namespace PingPong.Engine
                     responseFalgs |= ResponseFlags.Error;
                 }
 
-                _responseQueue.Enqueue((new ResponseHeader {
+                _responseQueue.Enqueue(new ResponseQueueEntry(new ResponseHeader {
                     RequestNo = requestHeader.RequestNo,
                     MessageId = messageId,
                     Flags = responseFalgs
@@ -118,7 +133,7 @@ namespace PingPong.Engine
 
             while (!_stopResponsePropagator)
             {
-                if (!_responseQueue.TryDequeue(out (ResponseHeader Header, object? Body) nextResponse))
+                if (!_responseQueue.TryDequeue(out ResponseQueueEntry nextResponse))
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(100));
                     continue;

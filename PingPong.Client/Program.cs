@@ -1,6 +1,9 @@
 using System;
 using System.Net;
 using System.Threading;
+using NLog;
+using NLog.Config;
+using NLog.Targets;
 using PingPong.Engine;
 using PingPong.Messages;
 
@@ -10,15 +13,20 @@ namespace PingPong.Client
     {
         static void Main(string[] args)
         {
-            using var connection = 
-                new ClientConnection()
-                .Connect(IPAddress.Loopback, 10000);
+            InitLogging();
+
+            using var connection = new ClientConnection();
+                
+            connection.Connect("tcp://localhost:10000").Wait();
+            
+            if (connection.Status == ClientConnectionStatus.Broken)
+                return;
 
             const int requestCount = 10;
             for (int i = 0; i < requestCount; ++i)
             {
                 int arg = i;
-                connection.Send(new SquareRequest { Value = arg }, (SquareResponse response, bool isError) => {
+                connection.Send(new SquareRequest { Value = arg }, (SquareResponse response, RequestResult result) => {
                     Console.WriteLine($"Square response received {arg}^2 = {response.Result}");
                 });
             }
@@ -26,21 +34,37 @@ namespace PingPong.Client
             for (int i = 0; i < requestCount; ++i)
                 connection.Send(new AddRequest { Value = i });
 
-            connection.Send(new GetSummRequest{}, (GetSummResponse response, bool isError) => {
+            connection.Send(new GetSummRequest{}, (GetSummResponse response, RequestResult result) => {
                 Console.WriteLine($"Summ {response.Result}");
             });
 
             for (int i = 0; i < requestCount; ++i)
                 connection.Send(new WriteRequest { Message = $"Message {i}" });
 
-            connection.Send(new GetConfigValueRequest{}, (GetConfigValueResponse response, bool isError) => {
+            connection.Send(new GetConfigValueRequest{}, (GetConfigValueResponse response, RequestResult result) => {
                 Console.WriteLine($"Configurable service returned '{response.Value}'.");
             });
 
             while (connection.HasPendingRequests)
             {
-                connection.CheckInbox();
+                connection.InvokeCallbacks();
                 Thread.Sleep(1);
+            }
+
+            void InitLogging()
+            {
+                var config = new LoggingConfiguration();
+
+                var consoleTarget = new ConsoleTarget("consoleInfo");
+                consoleTarget.Layout = "${message}";
+
+                var consoleErrorTarget = new ConsoleTarget("consoleInfo");
+                consoleErrorTarget.Layout = "${message}\n${exception:format=tostring}";
+
+                config.AddRule(LogLevel.Info, LogLevel.Fatal, consoleTarget);
+                config.AddRule(LogLevel.Error, LogLevel.Fatal, consoleErrorTarget);
+
+                LogManager.Configuration = config;
             }
         }
     }

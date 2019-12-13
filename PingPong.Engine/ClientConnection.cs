@@ -11,38 +11,90 @@ namespace PingPong.Engine
 {
     public sealed class ClientConnection : IDisposable
     {
+        private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
+
+        private string _uri = "";
+        public string Uri =>
+            _uri;
+
         private readonly Socket _socket;
         private readonly Lazy<DelimitedMessageReader> _messageReader;
         private readonly Lazy<DelimitedMessageWriter> _messageWriter;
         private readonly MessageMap _messageMap = new MessageMap();
         private readonly Dictionary<int, int> _reqestResponseMap = new Dictionary<int, int>();
-        
+        private readonly RequestNoGenerator _requestNoGenerator;
+
         private Task? _requestPropagatorTask;
         private volatile bool _stopRequestPropagator;
-        private readonly ConcurrentQueue<(Type Type, object? Body, Action<object?, bool>? Callback)> _requestQueue 
-            = new ConcurrentQueue<(Type Type, object? Body, Action<object?, bool>? Callback)>();
-        
-        private Task? _responseReceiverTask;
-        private readonly ConcurrentQueue<(int RequestNo, object? Body, bool IsError)> _responseQueue 
-            = new ConcurrentQueue<(int RequestNo, object? Body, bool IsError)>();
 
-        private readonly ConcurrentDictionary<int, Action<object?, bool>> _responseCallbacks =
-            new ConcurrentDictionary<int, Action<object?, bool>>();
+        internal struct RequestQueueEntry
+        {
+            public readonly Type Type;
+            public readonly object? Body;
+            public readonly Action<object?, RequestResult>? Callback;
+
+            public RequestQueueEntry(Type type, object? body, Action<object?, RequestResult>? callback)
+            {
+                Type = type;
+                Body = body;
+                Callback = callback;
+            }
+        }
+        private readonly ConcurrentQueue<RequestQueueEntry> _requestQueue 
+            = new ConcurrentQueue<RequestQueueEntry>();
+        
+        internal IEnumerable<RequestQueueEntry> RequestQueue =>
+            _requestQueue;
+
+        private Task? _responseReceiverTask;
+
+        private struct ResponseQueueEntry
+        {
+            public readonly int RequestNo;
+            public readonly object? Body;
+            public readonly RequestResult Result;
+
+            public ResponseQueueEntry(int requestNo, object? body, RequestResult result)
+            {
+                RequestNo = requestNo;
+                Body = body;
+                Result = result;
+            }
+        }
+        private readonly ConcurrentQueue<ResponseQueueEntry> _responseQueue 
+            = new ConcurrentQueue<ResponseQueueEntry>();
+
+        private readonly ConcurrentDictionary<int, Action<object?, RequestResult>> _responseCallbacks =
+            new ConcurrentDictionary<int, Action<object?, RequestResult>>();
 
         private int _pendingRequestsCount;
-
         public bool HasPendingRequests => 
             _pendingRequestsCount > 0;
 
-        public ClientConnection()
+        private volatile ClientConnectionStatus _status;
+        public ClientConnectionStatus Status =>
+            _status;
+
+        public ClientConnection() :
+            this(new RequestNoGenerator())
+        {
+        }
+
+        internal ClientConnection(RequestNoGenerator requestNoGenerator)
         {
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
+            _socket.NoDelay = true;
+
             _messageReader = new Lazy<DelimitedMessageReader>(() => new DelimitedMessageReader(new NetworkStream(_socket, System.IO.FileAccess.Read, false)));
             _messageWriter = new Lazy<DelimitedMessageWriter>(() => new DelimitedMessageWriter(new NetworkStream(_socket, System.IO.FileAccess.Write, false)));
+            _requestNoGenerator = requestNoGenerator;
         }
 
         public void Dispose()
         {
+            if (_status == ClientConnectionStatus.Disposed)
+                throw new InvalidOperationException("Connection already disposed.");
+
             if (_requestPropagatorTask != null)
             {
                 _stopRequestPropagator = true;
@@ -59,36 +111,56 @@ namespace PingPong.Engine
                 _messageWriter.Value.Dispose();
             
             _socket.Dispose();
+            _status = ClientConnectionStatus.Disposed;
         }
 
-        public ClientConnection Connect(IPAddress address, int port)
+        public async Task Connect(string uri)
         {
-            _socket.Connect(new IPEndPoint(address, port));
+            if (_status != ClientConnectionStatus.NotConnected)
+                throw new InvalidOperationException("Invalid connection status.");
 
-            var preamble = _messageReader.Value.Read<Preamble>().Result;
+            _status = ClientConnectionStatus.Connecting;
+            _uri = uri;
 
-            foreach (MessageIdMapEntry ent in preamble.MessageIdMap)
+            _logger.Info("Connecting to '{0}'", uri);
+
+            try
             {
-                Type messageType = Type.GetType(ent.MessageType);
-                if (messageType == null)
-                    throw new ProtocolException($"Message type not found '{ent.MessageType}'");
+                var uriBuilder = new UriBuilder(uri);
+                
+                await _socket.ConnectAsync(uriBuilder.Host, uriBuilder.Port);
 
-                _messageMap.Add(messageType, ent.MessageId);
+                var preamble = await _messageReader.Value.Read<Preamble>();
+
+                foreach (MessageIdMapEntry ent in preamble.MessageIdMap)
+                {
+                    Type messageType = Type.GetType(ent.MessageType);
+                    if (messageType == null)
+                        throw new ProtocolException($"Message type not found '{ent.MessageType}'");
+
+                    _messageMap.Add(messageType, ent.MessageId);
+                }
+
+                foreach (RequestResponseMapEntry ent in preamble.RequestResponseMap)
+                    _reqestResponseMap.Add(ent.RequestId, ent.ResponsetId);
+
+                _requestPropagatorTask = PropagateRequests();
+                _responseReceiverTask = ReceiveResponses();
             }
-
-            foreach (RequestResponseMapEntry ent in preamble.RequestResponseMap)
-                _reqestResponseMap.Add(ent.RequestId, ent.ResponsetId);
-
-            _requestPropagatorTask = PropagateRequests();
-            _responseReceiverTask = ReceiveResponses();
-
-            return this;
+            catch (Exception ex)
+            {
+                _status = ClientConnectionStatus.Broken;
+                _logger.Error(ex, "Failed to connect to '{0}'", _uri);
+            }
         }
 
         public ClientConnection Send<TRequest>() 
             where TRequest: class
         {
-            _requestQueue.Enqueue((typeof(TRequest), null, null));
+            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+                throw new InvalidOperationException("Invalid connection status.");
+
+            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), null, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
@@ -96,61 +168,70 @@ namespace PingPong.Engine
         public ClientConnection Send<TRequest>(TRequest request) 
             where TRequest: class
         {
-            _requestQueue.Enqueue((typeof(TRequest), request, null));
+            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+                throw new InvalidOperationException("Invalid connection status.");
+
+            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), request, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
 
-        public ClientConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse, bool> result)
+        public ClientConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
-            _requestQueue.Enqueue((typeof(TRequest), request, callback));
+            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+                throw new InvalidOperationException("Invalid connection status.");
+
+            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
-            void callback(object? responseBody, bool isError) {
+            void InvlokeCallback(object? responseBody, RequestResult result) {
                 if (responseBody == null)
-                    throw new ArgumentNullException("Response is not expected to be null");
+                    throw new ProtocolException("Response is not expected to be null");
 
-                result((TResponse)responseBody, isError);
+                callback((TResponse)responseBody, result);
             };
         }
 
-        public ClientConnection Send<TRequest, TResponse>(Action<TResponse, bool> result)
+        public ClientConnection Send<TRequest, TResponse>(Action<TResponse, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
-            _requestQueue.Enqueue((typeof(TRequest), null, callback));
+            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+                throw new InvalidOperationException("Invalid connection status.");
+
+            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
-            void callback(object? responseBody, bool isError) {
+            void InvokeCallback(object? responseBody, RequestResult result) {
                 if (responseBody == null)
-                    throw new ArgumentNullException("Response is not expected to be null");
+                    throw new ProtocolException("Response is not expected to be null");
 
-                result((TResponse)responseBody, isError);
+                callback((TResponse)responseBody, result);
             };
         }
 
-        public void CheckInbox()
+        public void InvokeCallbacks()
         {
-            if (_requestPropagatorTask == null || _responseReceiverTask == null)
-                throw new InvalidOperationException("Connection is not established");
+            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active || _status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException("Invalid connection status.");
 
-            while (_responseQueue.TryDequeue(out (int RequestNo, object? Body, bool IsError) response))
+            while (_responseQueue.TryDequeue(out ResponseQueueEntry response))
             {
-                if (_responseCallbacks.TryRemove(response.RequestNo, out Action<object?, bool> callback))
+                if (_responseCallbacks.TryRemove(response.RequestNo, out Action<object?, RequestResult> callback))
                 {
-                    callback(response.Body, response.IsError);
+                    callback(response.Body, response.Result);
                     Interlocked.Decrement(ref _pendingRequestsCount);
                 }
             }
 
-            if (_requestPropagatorTask.IsFaulted)
+            if (_requestPropagatorTask?.IsFaulted ?? false)
                 throw new ProtocolException("Request propagator faulted", _requestPropagatorTask.Exception);
 
-            if (_responseReceiverTask.IsFaulted)
+            if (_responseReceiverTask?.IsFaulted ?? false)
                 throw new ProtocolException("Request receiver faulted", _responseReceiverTask.Exception);
         }
 
@@ -159,40 +240,48 @@ namespace PingPong.Engine
             // Yield to get rid of the sync section.
             await Task.Yield();
 
-            int nextRequestNo = 1;
-
-            while (!_stopRequestPropagator)
+            try
             {
-                if (!_requestQueue.TryDequeue(out (Type Type, object? Body, Action<object?, bool>? Callback) nextRequest))
+                _status = ClientConnectionStatus.Active;
+
+                while (!_stopRequestPropagator)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(100));
-                    continue;
+                    if (!_requestQueue.TryDequeue(out RequestQueueEntry nextRequest))
+                    {
+                        await Task.Delay(TimeSpan.FromMilliseconds(100));
+                        continue;
+                    }
+
+                    int requestNo = _requestNoGenerator.GetNext();
+                    int messageId = _messageMap.GetMessageIdByType(nextRequest.Type);
+                    RequestFlags flags = RequestFlags.None;
+
+                    if (nextRequest.Body == null)
+                        flags |= RequestFlags.NoBody;
+
+                    if (nextRequest.Callback != null)
+                        _responseCallbacks.TryAdd(requestNo, nextRequest.Callback);
+
+                    await _messageWriter.Value.Write(new RequestHeader() {
+                        RequestNo = requestNo,
+                        MessageId = messageId,
+                        Flags = flags
+                    });
+
+                    if (nextRequest.Body != null)
+                        await _messageWriter.Value.Write(nextRequest.Body);
+                    
+                    if (nextRequest.Callback == null)
+                        Interlocked.Decrement(ref _pendingRequestsCount);
                 }
 
-                int requestNo = nextRequestNo++;
-                int messageId = _messageMap.GetMessageIdByType(nextRequest.Type);
-                RequestFlags flags = RequestFlags.None;
-
-                if (nextRequest.Body == null)
-                    flags |= RequestFlags.NoBody;
-
-                if (nextRequest.Callback != null)
-                    _responseCallbacks.TryAdd(requestNo, nextRequest.Callback);
-
-                await _messageWriter.Value.Write(new RequestHeader() {
-                    RequestNo = requestNo,
-                    MessageId = messageId,
-                    Flags = flags
-                });
-
-                if (nextRequest.Body != null)
-                    await _messageWriter.Value.Write(nextRequest.Body);
-                
-                if (nextRequest.Callback == null)
-                    Interlocked.Decrement(ref _pendingRequestsCount);
+                await _messageWriter.Value.Write(new RequestHeader{});
             }
-
-            await _messageWriter.Value.Write(new RequestHeader{});
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Connection to '{0}' is broken", _uri);
+                _status = ClientConnectionStatus.Broken;
+            }
         }
 
         private async Task ReceiveResponses()
@@ -200,27 +289,35 @@ namespace PingPong.Engine
             // Yield to get rid of the sync section.
             await Task.Yield();
 
-            while (true)
+            try
             {
-                var responseHeader = await _messageReader.Value.Read<ResponseHeader>();
-
-                if ((responseHeader.Flags & ResponseFlags.Termination) == ResponseFlags.Termination)
-                    break;
-
-                if ((responseHeader.Flags & ResponseFlags.Error) == ResponseFlags.Error)
+                while (true)
                 {
-                    _responseQueue.Enqueue((responseHeader.RequestNo, null, true));
-                    continue;
-                }
+                    var responseHeader = await _messageReader.Value.Read<ResponseHeader>();
 
-                object? responseBody = null;
-                if ((responseHeader.Flags & ResponseFlags.NoBody) == ResponseFlags.None)
-                {
-                    Type responseType = _messageMap.GetMessageTypeById(responseHeader.MessageId);
-                    responseBody = await _messageReader.Value.Read(responseType);
-                }
+                    if ((responseHeader.Flags & ResponseFlags.Termination) == ResponseFlags.Termination)
+                        break;
 
-                _responseQueue.Enqueue((responseHeader.RequestNo, responseBody, false));
+                    if ((responseHeader.Flags & ResponseFlags.Error) == ResponseFlags.Error)
+                    {
+                        _responseQueue.Enqueue(new ResponseQueueEntry(responseHeader.RequestNo, null, RequestResult.ServerError));
+                        continue;
+                    }
+
+                    object? responseBody = null;
+                    if ((responseHeader.Flags & ResponseFlags.NoBody) == ResponseFlags.None)
+                    {
+                        Type responseType = _messageMap.GetMessageTypeById(responseHeader.MessageId);
+                        responseBody = await _messageReader.Value.Read(responseType);
+                    }
+
+                    _responseQueue.Enqueue(new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Connection to '{0}' is broken", _uri);
+                _status = ClientConnectionStatus.Broken;
             }
         }
     }
