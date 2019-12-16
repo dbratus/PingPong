@@ -2,9 +2,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Net.Sockets;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
 
@@ -22,11 +22,11 @@ namespace PingPong.Engine
         private readonly Lazy<DelimitedMessageReader> _messageReader;
         private readonly Lazy<DelimitedMessageWriter> _messageWriter;
         private readonly MessageMap _messageMap = new MessageMap();
-        private readonly Dictionary<int, int> _reqestResponseMap = new Dictionary<int, int>();
+        private readonly Dictionary<int, int> _reqestResponseMap 
+            = new Dictionary<int, int>();
         private readonly RequestNoGenerator _requestNoGenerator;
 
         private Task? _requestPropagatorTask;
-        private volatile bool _stopRequestPropagator;
 
         public IEnumerable<Type> SupportedRequestTypes =>
             _reqestResponseMap.Keys.Select(_messageMap.GetMessageTypeById);
@@ -44,8 +44,10 @@ namespace PingPong.Engine
                 Callback = callback;
             }
         }
-        private readonly ConcurrentQueue<RequestQueueEntry> _requestQueue 
-            = new ConcurrentQueue<RequestQueueEntry>();
+        private readonly Channel<RequestQueueEntry> _requestChan 
+            = Channel.CreateUnbounded<RequestQueueEntry>(new UnboundedChannelOptions {
+                SingleReader = true
+            });
 
         private Task? _responseReceiverTask;
 
@@ -62,8 +64,11 @@ namespace PingPong.Engine
                 Result = result;
             }
         }
-        private readonly ConcurrentQueue<ResponseQueueEntry> _responseQueue 
-            = new ConcurrentQueue<ResponseQueueEntry>();
+        private readonly Channel<ResponseQueueEntry> _responseChan 
+            = Channel.CreateUnbounded<ResponseQueueEntry>(new UnboundedChannelOptions {
+                SingleWriter = true,
+                SingleReader = true
+            });
 
         private readonly ConcurrentDictionary<int, RequestQueueEntry> _requestsWaitingForResponse =
             new ConcurrentDictionary<int, RequestQueueEntry>();
@@ -71,18 +76,6 @@ namespace PingPong.Engine
         private int _pendingRequestsCount;
         public bool HasPendingRequests => 
             _pendingRequestsCount > 0;
-
-        internal IEnumerable<RequestQueueEntry> PendingRequests
-        {
-            get 
-            {
-                foreach (RequestQueueEntry ent in _requestQueue)
-                    yield return ent;
-
-                foreach (RequestQueueEntry ent in _requestsWaitingForResponse.Values)
-                    yield return ent;
-            }
-        }
 
         private volatile int _status = 
             (int)ClientConnectionStatus.NotConnected;
@@ -115,7 +108,7 @@ namespace PingPong.Engine
 
             if (_requestPropagatorTask != null)
             {
-                _stopRequestPropagator = true;
+                _requestChan.Writer.Complete();
                 _requestPropagatorTask.Wait();
             }
 
@@ -188,7 +181,7 @@ namespace PingPong.Engine
             if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
-            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), null, null));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
@@ -199,7 +192,7 @@ namespace PingPong.Engine
             if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
-            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), request, null));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
@@ -211,7 +204,7 @@ namespace PingPong.Engine
             if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
-            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), request, InvlokeCallback));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -230,7 +223,7 @@ namespace PingPong.Engine
             if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
-            _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), null, InvokeCallback));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -247,7 +240,7 @@ namespace PingPong.Engine
             if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
-            _requestQueue.Enqueue(request);
+            _requestChan.Writer.TryWrite(request);
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
@@ -257,7 +250,7 @@ namespace PingPong.Engine
             if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
-            while (_responseQueue.TryDequeue(out ResponseQueueEntry response))
+            while (_responseChan.Reader.TryRead(out ResponseQueueEntry response))
             {
                 if (_requestsWaitingForResponse.TryRemove(response.RequestNo, out RequestQueueEntry request))
                 {
@@ -275,6 +268,17 @@ namespace PingPong.Engine
                 throw new ProtocolException("Request receiver faulted", _responseReceiverTask?.Exception);
         }
 
+        internal IEnumerable<RequestQueueEntry> ConsumePendingRequests()
+        {
+            while (_requestChan.Reader.TryRead(out RequestQueueEntry request))
+                yield return request;
+
+            foreach (RequestQueueEntry request in _requestsWaitingForResponse.Values)
+                yield return request;
+
+            _requestsWaitingForResponse.Clear();
+        }
+
         private async Task PropagateRequests()
         {
             // Yield to get rid of the sync section.
@@ -284,12 +288,17 @@ namespace PingPong.Engine
             {
                 Status = ClientConnectionStatus.Active;
 
-                while (!_stopRequestPropagator)
+                while (true)
                 {
-                    if (!_requestQueue.TryDequeue(out RequestQueueEntry nextRequest))
+                    RequestQueueEntry nextRequest;
+
+                    try
                     {
-                        await Task.Delay(TimeSpan.FromMilliseconds(100));
-                        continue;
+                        nextRequest = await _requestChan.Reader.ReadAsync();
+                    }
+                    catch (ChannelClosedException)
+                    {
+                        break;
                     }
 
                     int requestNo = _requestNoGenerator.GetNext();
@@ -340,7 +349,7 @@ namespace PingPong.Engine
 
                     if ((responseHeader.Flags & ResponseFlags.Error) == ResponseFlags.Error)
                     {
-                        _responseQueue.Enqueue(new ResponseQueueEntry(responseHeader.RequestNo, null, RequestResult.ServerError));
+                        await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, null, RequestResult.ServerError));
                         continue;
                     }
 
@@ -351,7 +360,7 @@ namespace PingPong.Engine
                         responseBody = await _messageReader.Value.Read(responseType);
                     }
 
-                    _responseQueue.Enqueue(new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));
+                    await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));
                 }
             }
             catch (Exception ex)

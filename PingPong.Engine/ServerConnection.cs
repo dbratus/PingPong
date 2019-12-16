@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Net.Sockets;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
 
@@ -28,10 +29,12 @@ namespace PingPong.Engine
                 Body = body;
             }
         }
-        private readonly ConcurrentQueue<ResponseQueueEntry> _responseQueue = 
-            new ConcurrentQueue<ResponseQueueEntry>();
+        private readonly Channel<ResponseQueueEntry> _responseChan = 
+            Channel.CreateUnbounded<ResponseQueueEntry>(new UnboundedChannelOptions {
+                SingleReader = true,
+                SingleWriter = true
+            });
         private readonly Task _responsePropagatorTask;
-        private volatile bool _stopResponsePropagator;
 
         public Socket Socket =>
             _socket;
@@ -50,7 +53,7 @@ namespace PingPong.Engine
 
         public void Dispose()
         {
-            _stopResponsePropagator = true;
+            _responseChan.Writer.Complete();
             _responsePropagatorTask.Wait();
 
             _messageReader.Dispose();
@@ -118,7 +121,7 @@ namespace PingPong.Engine
                     responseFalgs |= ResponseFlags.Error;
                 }
 
-                _responseQueue.Enqueue(new ResponseQueueEntry(new ResponseHeader {
+                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
                     RequestNo = requestHeader.RequestNo,
                     MessageId = messageId,
                     Flags = responseFalgs
@@ -131,23 +134,35 @@ namespace PingPong.Engine
             // Yield to get rid of the sync section.
             await Task.Yield();
 
-            while (!_stopResponsePropagator)
+            try
             {
-                if (!_responseQueue.TryDequeue(out ResponseQueueEntry nextResponse))
+                while (true)
                 {
-                    await Task.Delay(TimeSpan.FromMilliseconds(100));
-                    continue;
+                    ResponseQueueEntry nextResponse;
+
+                    try
+                    {
+                        nextResponse = await _responseChan.Reader.ReadAsync();
+                    }
+                    catch (ChannelClosedException)
+                    {
+                        break;
+                    }
+
+                    await _messageWriter.Write(nextResponse.Header);
+                    
+                    if (nextResponse.Body != null)
+                        await _messageWriter.Write(nextResponse.Body);
                 }
 
-                await _messageWriter.Write(nextResponse.Header);
-                
-                if (nextResponse.Body != null)
-                    await _messageWriter.Write(nextResponse.Body);
+                await _messageWriter.Write(new ResponseHeader{
+                    Flags = ResponseFlags.Termination
+                });
             }
-
-            await _messageWriter.Write(new ResponseHeader{
-                Flags = ResponseFlags.Termination
-            });
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Response propagator faulted");
+            }
         }
     }
 }

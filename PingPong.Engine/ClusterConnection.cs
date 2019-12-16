@@ -230,7 +230,7 @@ namespace PingPong.Engine
                 {
                     if (connection.HasPendingRequests)
                     {
-                        foreach (ClientConnection.RequestQueueEntry request in connection.PendingRequests)
+                        foreach (ClientConnection.RequestQueueEntry request in connection.ConsumePendingRequests())
                         {
                             try
                             {

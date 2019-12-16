@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.CSharp" Version="4.6.0" />
     <PackageReference Include="NLog" Version="4.6.8" />
     <PackageReference Include="System.Text.Json" Version="4.7.0" />
+    <PackageReference Include="System.Threading.Channels" Version="4.7.0" />
   </ItemGroup>
 
   <ItemGroup>
