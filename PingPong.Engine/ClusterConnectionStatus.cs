@@ -1,11 +1,11 @@
 namespace PingPong.Engine
 {
-    public enum ClientConnectionStatus : int
+    public enum ClusterConnectionStatus
     {
         NotConnected,
         Connecting,
         Active,
-        Broken,
+        Closed,
         Disposed
     }
 }

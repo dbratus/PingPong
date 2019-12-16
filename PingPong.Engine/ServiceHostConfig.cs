@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace PingPong.Engine
 {
-    public class ServiceHostConfig
+    public sealed class ServiceHostConfig
     {
         public int Port { get; set; }
 

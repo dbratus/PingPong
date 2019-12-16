@@ -15,12 +15,9 @@ namespace PingPong.Client
         {
             InitLogging();
 
-            using var connection = new ClientConnection();
+            using var connection = new ClusterConnection(new [] { "tcp://localhost:10000" });
                 
-            connection.Connect("tcp://localhost:10000").Wait();
-            
-            if (connection.Status == ClientConnectionStatus.Broken)
-                return;
+            connection.Connect().Wait();
 
             const int requestCount = 10;
             for (int i = 0; i < requestCount; ++i)

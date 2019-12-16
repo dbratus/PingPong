@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
@@ -9,11 +10,11 @@ using NLog;
 
 namespace PingPong.Engine
 {
-    public sealed class ClientConnection : IDisposable
+    sealed class ClientConnection : IDisposable
     {
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
-        private string _uri = "";
+        private readonly string _uri;
         public string Uri =>
             _uri;
 
@@ -26,6 +27,9 @@ namespace PingPong.Engine
 
         private Task? _requestPropagatorTask;
         private volatile bool _stopRequestPropagator;
+
+        public IEnumerable<Type> SupportedRequestTypes =>
+            _reqestResponseMap.Keys.Select(_messageMap.GetMessageTypeById);
 
         internal struct RequestQueueEntry
         {
@@ -42,9 +46,6 @@ namespace PingPong.Engine
         }
         private readonly ConcurrentQueue<RequestQueueEntry> _requestQueue 
             = new ConcurrentQueue<RequestQueueEntry>();
-        
-        internal IEnumerable<RequestQueueEntry> RequestQueue =>
-            _requestQueue;
 
         private Task? _responseReceiverTask;
 
@@ -64,24 +65,41 @@ namespace PingPong.Engine
         private readonly ConcurrentQueue<ResponseQueueEntry> _responseQueue 
             = new ConcurrentQueue<ResponseQueueEntry>();
 
-        private readonly ConcurrentDictionary<int, Action<object?, RequestResult>> _responseCallbacks =
-            new ConcurrentDictionary<int, Action<object?, RequestResult>>();
+        private readonly ConcurrentDictionary<int, RequestQueueEntry> _requestsWaitingForResponse =
+            new ConcurrentDictionary<int, RequestQueueEntry>();
 
         private int _pendingRequestsCount;
         public bool HasPendingRequests => 
             _pendingRequestsCount > 0;
 
-        private volatile ClientConnectionStatus _status;
-        public ClientConnectionStatus Status =>
-            _status;
+        internal IEnumerable<RequestQueueEntry> PendingRequests
+        {
+            get 
+            {
+                foreach (RequestQueueEntry ent in _requestQueue)
+                    yield return ent;
 
-        public ClientConnection() :
-            this(new RequestNoGenerator())
+                foreach (RequestQueueEntry ent in _requestsWaitingForResponse.Values)
+                    yield return ent;
+            }
+        }
+
+        private volatile int _status = 
+            (int)ClientConnectionStatus.NotConnected;
+        public ClientConnectionStatus Status
+        {
+            get { return (ClientConnectionStatus)_status; }
+            private set { _status = (int)value; }
+        }
+
+        public ClientConnection(string uri) :
+            this(new RequestNoGenerator(), uri)
         {
         }
 
-        internal ClientConnection(RequestNoGenerator requestNoGenerator)
+        internal ClientConnection(RequestNoGenerator requestNoGenerator, string uri)
         {
+            _uri = uri;
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
             _socket.NoDelay = true;
 
@@ -92,7 +110,7 @@ namespace PingPong.Engine
 
         public void Dispose()
         {
-            if (_status == ClientConnectionStatus.Disposed)
+            if (Status == ClientConnectionStatus.Disposed)
                 throw new InvalidOperationException("Connection already disposed.");
 
             if (_requestPropagatorTask != null)
@@ -109,24 +127,28 @@ namespace PingPong.Engine
             
             if (_messageWriter.IsValueCreated)
                 _messageWriter.Value.Dispose();
-            
+
             _socket.Dispose();
-            _status = ClientConnectionStatus.Disposed;
+            Status = ClientConnectionStatus.Disposed;
         }
 
-        public async Task Connect(string uri)
+        public async Task Connect(TimeSpan delay)
         {
-            if (_status != ClientConnectionStatus.NotConnected)
-                throw new InvalidOperationException("Invalid connection status.");
+            {
+                int status = _status;
 
-            _status = ClientConnectionStatus.Connecting;
-            _uri = uri;
+                if (
+                    status != (int)ClientConnectionStatus.NotConnected &&
+                    Interlocked.CompareExchange(ref _status, (int)ClientConnectionStatus.Connecting, status) != status
+                )
+                    throw new InvalidOperationException("Invalid connection status.");
+            }
 
-            _logger.Info("Connecting to '{0}'", uri);
+            _logger.Info("Connecting to '{0}'", _uri);
 
             try
             {
-                var uriBuilder = new UriBuilder(uri);
+                var uriBuilder = new UriBuilder(_uri);
                 
                 await _socket.ConnectAsync(uriBuilder.Host, uriBuilder.Port);
 
@@ -149,15 +171,21 @@ namespace PingPong.Engine
             }
             catch (Exception ex)
             {
-                _status = ClientConnectionStatus.Broken;
-                _logger.Error(ex, "Failed to connect to '{0}'", _uri);
+                int status = _status;
+                if (status != (int)ClientConnectionStatus.Disposed)
+                {
+                    Interlocked.CompareExchange(ref _status, (int)ClientConnectionStatus.Broken, status);
+
+                    if (Status != ClientConnectionStatus.Disposed)
+                        _logger.Error(ex, "Failed to connect to '{0}'", _uri);
+                }
             }
         }
 
         public ClientConnection Send<TRequest>() 
             where TRequest: class
         {
-            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
             _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), null, null));
@@ -165,10 +193,10 @@ namespace PingPong.Engine
             return this;
         }
 
-        public ClientConnection Send<TRequest>(TRequest request) 
+        public ClientConnection Send<TRequest>(TRequest request)
             where TRequest: class
         {
-            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
             _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), request, null));
@@ -180,7 +208,7 @@ namespace PingPong.Engine
             where TRequest: class 
             where TResponse: class
         {
-            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
             _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), request, InvlokeCallback));
@@ -199,7 +227,7 @@ namespace PingPong.Engine
             where TRequest: class 
             where TResponse: class
         {
-            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active))
+            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
             _requestQueue.Enqueue(new RequestQueueEntry(typeof(TRequest), null, InvokeCallback));
@@ -214,25 +242,37 @@ namespace PingPong.Engine
             };
         }
 
+        internal ClientConnection Send(RequestQueueEntry request)
+        {
+            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException("Invalid connection status.");
+
+            _requestQueue.Enqueue(request);
+            Interlocked.Increment(ref _pendingRequestsCount);
+            return this;
+        }
+
         public void InvokeCallbacks()
         {
-            if (!(_status == ClientConnectionStatus.Connecting || _status == ClientConnectionStatus.Active || _status == ClientConnectionStatus.Broken))
+            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException("Invalid connection status.");
 
             while (_responseQueue.TryDequeue(out ResponseQueueEntry response))
             {
-                if (_responseCallbacks.TryRemove(response.RequestNo, out Action<object?, RequestResult> callback))
+                if (_requestsWaitingForResponse.TryRemove(response.RequestNo, out RequestQueueEntry request))
                 {
-                    callback(response.Body, response.Result);
+                    if (request.Callback != null)
+                        request.Callback(response.Body, response.Result);
+
                     Interlocked.Decrement(ref _pendingRequestsCount);
                 }
             }
 
             if (_requestPropagatorTask?.IsFaulted ?? false)
-                throw new ProtocolException("Request propagator faulted", _requestPropagatorTask.Exception);
+                throw new ProtocolException("Request propagator faulted", _requestPropagatorTask?.Exception);
 
             if (_responseReceiverTask?.IsFaulted ?? false)
-                throw new ProtocolException("Request receiver faulted", _responseReceiverTask.Exception);
+                throw new ProtocolException("Request receiver faulted", _responseReceiverTask?.Exception);
         }
 
         private async Task PropagateRequests()
@@ -242,7 +282,7 @@ namespace PingPong.Engine
 
             try
             {
-                _status = ClientConnectionStatus.Active;
+                Status = ClientConnectionStatus.Active;
 
                 while (!_stopRequestPropagator)
                 {
@@ -260,9 +300,9 @@ namespace PingPong.Engine
                         flags |= RequestFlags.NoBody;
 
                     if (nextRequest.Callback != null)
-                        _responseCallbacks.TryAdd(requestNo, nextRequest.Callback);
+                        _requestsWaitingForResponse.TryAdd(requestNo, nextRequest);
 
-                    await _messageWriter.Value.Write(new RequestHeader() {
+                    await _messageWriter.Value.Write(new RequestHeader {
                         RequestNo = requestNo,
                         MessageId = messageId,
                         Flags = flags
@@ -280,7 +320,7 @@ namespace PingPong.Engine
             catch (Exception ex)
             {
                 _logger.Error(ex, "Connection to '{0}' is broken", _uri);
-                _status = ClientConnectionStatus.Broken;
+                Status = ClientConnectionStatus.Broken;
             }
         }
 
@@ -317,7 +357,7 @@ namespace PingPong.Engine
             catch (Exception ex)
             {
                 _logger.Error(ex, "Connection to '{0}' is broken", _uri);
-                _status = ClientConnectionStatus.Broken;
+                Status = ClientConnectionStatus.Broken;
             }
         }
     }
