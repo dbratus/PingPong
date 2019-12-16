@@ -140,7 +140,7 @@ namespace PingPong.Engine
         public ClusterConnection Send<TRequest>(TRequest request)
             where TRequest: class 
         {
-            if (_status != ClusterConnectionStatus.Active)
+            if (!(_status == ClusterConnectionStatus.Active || _status == ClusterConnectionStatus.Connecting))
                 throw new InvalidOperationException("Invalid connection status.");
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
@@ -155,7 +155,7 @@ namespace PingPong.Engine
             where TRequest: class 
             where TResponse: class
         {
-            if (_status != ClusterConnectionStatus.Active)
+            if (!(_status == ClusterConnectionStatus.Active || _status == ClusterConnectionStatus.Connecting))
                 throw new InvalidOperationException("Invalid connection status.");
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
@@ -181,7 +181,7 @@ namespace PingPong.Engine
             where TRequest: class 
             where TResponse: class
         {
-            if (_status != ClusterConnectionStatus.Active)
+            if (!(_status == ClusterConnectionStatus.Active || _status == ClusterConnectionStatus.Connecting))
                 throw new InvalidOperationException("Invalid connection status.");
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
