@@ -2,8 +2,8 @@
     "Port": 10001,
 
     "KnownHosts": [
-        "localhost:10000",
-        "localhost:10001"
+        "tcp://localhost:10000",
+        "tcp://localhost:10001"
     ],
 
     "ServiceConfigs": {

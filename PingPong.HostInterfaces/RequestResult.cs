@@ -1,9 +1,9 @@
-namespace PingPong.Engine
+namespace PingPong.HostInterfaces
 {
     public enum RequestResult
     {
         OK,
         ServerError,
-        NotDelivered
+        DeliveryTimeout
     }
 }

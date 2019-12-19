@@ -3,6 +3,7 @@
   <ItemGroup>
     <ProjectReference Include="..\PingPong.Engine\PingPong.Engine.csproj" />
     <ProjectReference Include="..\PingPong.Messages\PingPong.Messages.csproj" />
+    <ProjectReference Include="..\PingPong.HostInterfaces\PingPong.HostInterfaces.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

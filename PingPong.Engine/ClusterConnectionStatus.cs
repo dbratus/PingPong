@@ -5,7 +5,6 @@ namespace PingPong.Engine
         NotConnected,
         Connecting,
         Active,
-        Closed,
         Disposed
     }
 }

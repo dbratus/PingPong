@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
+using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
 {
@@ -36,12 +37,14 @@ namespace PingPong.Engine
             public readonly Type Type;
             public readonly object? Body;
             public readonly Action<object?, RequestResult>? Callback;
+            public readonly DateTime CreationTime;
 
             public RequestQueueEntry(Type type, object? body, Action<object?, RequestResult>? callback)
             {
                 Type = type;
                 Body = body;
                 Callback = callback;
+                CreationTime = DateTime.Now;
             }
         }
         private readonly Channel<RequestQueueEntry> _requestChan 
@@ -130,14 +133,24 @@ namespace PingPong.Engine
             {
                 int status = _status;
 
-                if (
-                    status != (int)ClientConnectionStatus.NotConnected &&
-                    Interlocked.CompareExchange(ref _status, (int)ClientConnectionStatus.Connecting, status) != status
-                )
-                    throw new InvalidOperationException("Invalid connection status.");
+                if (status != (int)ClientConnectionStatus.NotConnected)
+                    throw new InvalidOperationException($"Invalid connection status {(ClientConnectionStatus)status}.");
+                
+                int newStatus;
+                if ((newStatus = Interlocked.CompareExchange(ref _status, (int)ClientConnectionStatus.Connecting, status)) != status)
+                    throw new InvalidOperationException($"Invalid connection status {(ClientConnectionStatus)newStatus}.");
             }
 
-            _logger.Info("Connecting to '{0}'", _uri);
+            if (delay > TimeSpan.Zero)
+            {
+                _logger.Info("Connecting to '{0}' in {1} {2}", _uri, delay, Status);
+
+                await Task.Delay(delay);
+            }
+            else
+            {
+                _logger.Info("Connecting to '{0}'", _uri);
+            }
 
             try
             {
@@ -172,14 +185,17 @@ namespace PingPong.Engine
                     if (Status != ClientConnectionStatus.Disposed)
                         _logger.Error(ex, "Failed to connect to '{0}'", _uri);
                 }
+
+                throw;
             }
         }
 
         public ClientConnection Send<TRequest>() 
             where TRequest: class
         {
-            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClientConnectionStatus status = Status;
+            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, null));
             Interlocked.Increment(ref _pendingRequestsCount);
@@ -189,66 +205,69 @@ namespace PingPong.Engine
         public ClientConnection Send<TRequest>(TRequest request)
             where TRequest: class
         {
-            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClientConnectionStatus status = Status;
+            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
 
-        public ClientConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse, RequestResult> callback)
+        public ClientConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
-            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClientConnectionStatus status = Status;
+            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
-                if (responseBody == null)
-                    throw new ProtocolException("Response is not expected to be null");
-
-                callback((TResponse)responseBody, result);
+                callback((TResponse?)responseBody, result);
             };
         }
 
-        public ClientConnection Send<TRequest, TResponse>(Action<TResponse, RequestResult> callback)
+        public ClientConnection Send<TRequest, TResponse>(Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
-            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClientConnectionStatus status = Status;
+            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
             void InvokeCallback(object? responseBody, RequestResult result) {
-                if (responseBody == null)
-                    throw new ProtocolException("Response is not expected to be null");
-
-                callback((TResponse)responseBody, result);
+                callback((TResponse?)responseBody, result);
             };
         }
 
         internal ClientConnection Send(RequestQueueEntry request)
         {
-            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClientConnectionStatus status = Status;
+            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             _requestChan.Writer.TryWrite(request);
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
 
-        public void InvokeCallbacks()
+        public void Update()
         {
-            if (!(Status == ClientConnectionStatus.Connecting || Status == ClientConnectionStatus.Active || Status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClientConnectionStatus status = Status;
+
+            if (status == ClientConnectionStatus.Connecting)
+                return;
+
+            if (!(status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             while (_responseChan.Reader.TryRead(out ResponseQueueEntry response))
             {

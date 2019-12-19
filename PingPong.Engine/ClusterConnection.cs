@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NLog;
+using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
 {
@@ -11,19 +13,18 @@ namespace PingPong.Engine
     {
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
-        private readonly string[] _uris;
-        public string[] Uris =>
-            _uris;
-
         private readonly ClusterConnectionSettings _settings;
         public ClusterConnectionSettings Settings =>
             _settings;
 
         private readonly RequestNoGenerator _requestNoGenerator =
             new RequestNoGenerator();
+
+        private readonly string[] _uris;
+
         private readonly ClientConnection?[] _connections;
-        private readonly Dictionary<Type, ConnectionSelector> _routingMap = 
-            new Dictionary<Type, ConnectionSelector>();
+        private readonly ConcurrentDictionary<Type, ConnectionSelector> _routingMap = 
+            new ConcurrentDictionary<Type, ConnectionSelector>();
 
         private volatile ClusterConnectionStatus _status = 
             ClusterConnectionStatus.NotConnected;
@@ -33,6 +34,9 @@ namespace PingPong.Engine
         public bool HasPendingRequests =>
             _connections.Any(conn => conn?.HasPendingRequests ?? false);
 
+        private readonly ConcurrentQueue<ClientConnection.RequestQueueEntry> _requestsOnHold =
+            new ConcurrentQueue<ClientConnection.RequestQueueEntry>();
+
         public ClusterConnection(string[] uris) :
             this(uris, new ClusterConnectionSettings())
         {
@@ -40,97 +44,83 @@ namespace PingPong.Engine
 
         public ClusterConnection(string[] uris, ClusterConnectionSettings settings)
         {
-            _uris = uris;
             _settings = settings;
-            _connections = new ClientConnection[uris.Length];
+            _uris = uris;
+            _connections = new ClientConnection?[uris.Length];
         }
 
         public void Dispose()
         {
-            foreach (ClientConnection? connection in _connections)
-                connection?.Dispose();
+            foreach (ClientConnection? conn in _connections)
+                conn?.Dispose();
+        
+            _status = ClusterConnectionStatus.Disposed;
         }
 
-        public async Task Connect()
+        public Task Connect() =>
+            Connect(TimeSpan.Zero);
+
+        public async Task Connect(TimeSpan delay)
         {
-            if (_status != ClusterConnectionStatus.NotConnected)
-                throw new InvalidOperationException("Invalid connection status.");
+            ClusterConnectionStatus status = _status;
+            if (status != ClusterConnectionStatus.NotConnected)
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             _status = ClusterConnectionStatus.Connecting;
 
-            var clientConnectionTasks = _uris.Select(CreateClientConnection).ToArray();
-            var routingMap = new Dictionary<Type, List<int>>();
+            if (delay > TimeSpan.Zero)
+                await Task.Delay(delay);
 
-            for (int connIdx = 0; connIdx < clientConnectionTasks.Length; ++connIdx)
+            for (int i = 0; i < _connections.Length; ++i)
             {
-                ClientConnection? conn = await clientConnectionTasks[connIdx];
-                if (conn == null)
-                    continue;
+                var conn = new ClientConnection(_uris[i]);
                 
-                foreach (Type requestType in conn.SupportedRequestTypes)
+                try
                 {
-                    if (!routingMap.TryGetValue(requestType, out List<int> connections))
-                    {
-                        connections = new List<int>();
-                        routingMap.Add(requestType, connections);
-                    }
+                    await conn.Connect(TimeSpan.Zero);
 
-                    connections.Add(connIdx);
+                    Volatile.Write(ref _connections[i], conn);
+                    RegisterConnection(i);
                 }
-
-                _connections[connIdx] = conn;
+                catch (Exception)
+                {
+                    // The connection is broken, but it will be reconnected later.
+                    Volatile.Write(ref _connections[i], conn);
+                    continue;
+                }
             }
-
-            if (routingMap.Count == 0)
-            {
-                _status = ClusterConnectionStatus.NotConnected;
-                throw new CommunicationException("Failed to establish any connection");
-            }
-
-            foreach (KeyValuePair<Type, List<int>> mapEntry in routingMap)
-                _routingMap.Add(mapEntry.Key, new ConnectionSelector(mapEntry.Value.ToArray()));
 
             _status = ClusterConnectionStatus.Active;
         }
 
-        // This should be a local function of Connect, but due to a nasty bug in vscode it breaks
-        // the systex highlighting if defined like that. To be more precise, the cause is the '?' character
-        // in the return type.
-        private async Task<ClientConnection?> CreateClientConnection(string uri)
+        private void RegisterConnection(int connSlotIdx)
         {
-            int retriesLeft = _settings.MaxConnectionRetries;
+            ClientConnection? conn = _connections[connSlotIdx];
+            if (conn == null)
+                return;
 
-            while (true)
+            foreach (Type requestType in conn.SupportedRequestTypes)
             {
-                try
-                {
-                    var connection = new ClientConnection(_requestNoGenerator, uri);
-                    await connection.Connect(TimeSpan.Zero);
-                    return connection;
-                }
-                catch (Exception ex)
-                {
-                    if (retriesLeft == 0)
-                    {
-                        _logger.Error(ex, "Connection to '{0}' failed after {1} retries. URI ignored.", uri, _settings.MaxConnectionRetries);
-                        throw;
-                    }
-
-                    --retriesLeft;
-                }
-
-                await Task.Delay(_settings.ConnectionRetryDelay);
+                _routingMap.AddOrUpdate(
+                    requestType, 
+                    _ => new ConnectionSelector().AddConnectionIndex(connSlotIdx),
+                    (_, selector) => selector.AddConnectionIndex(connSlotIdx)
+                );
             }
         }
 
         public ClusterConnection Send<TRequest>()
             where TRequest: class 
         {
-            if (_status != ClusterConnectionStatus.Active)
-                throw new InvalidOperationException("Invalid connection status.");
+            ClusterConnectionStatus status = _status;
+            if (!(status == ClusterConnectionStatus.Active || status == ClusterConnectionStatus.Connecting))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
-                throw new ProtocolException($"Request type '{typeof(TRequest).FullName}' is not supported.");
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(typeof(TRequest), null, null));
+                return this;
+            }
 
             selector.SelectConnection(_connections)?.Send<TRequest>();
 
@@ -140,74 +130,106 @@ namespace PingPong.Engine
         public ClusterConnection Send<TRequest>(TRequest request)
             where TRequest: class 
         {
-            if (!(_status == ClusterConnectionStatus.Active || _status == ClusterConnectionStatus.Connecting))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClusterConnectionStatus status = _status;
+            if (!(status == ClusterConnectionStatus.Active || status == ClusterConnectionStatus.Connecting))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
-                throw new ProtocolException($"Request type '{typeof(TRequest).FullName}' is not supported.");
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(typeof(TRequest), request, null));
+                return this;
+            }
 
             selector.SelectConnection(_connections)?.Send(request);
 
             return this;
         }
 
-        public ClusterConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse, RequestResult> callback)
+        public ClusterConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
-            if (!(_status == ClusterConnectionStatus.Active || _status == ClusterConnectionStatus.Connecting))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClusterConnectionStatus status = _status;
+            if (!(status == ClusterConnectionStatus.Active || status == ClusterConnectionStatus.Connecting))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
-                throw new ProtocolException($"Request type '{typeof(TRequest).FullName}' is not supported.");
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    typeof(TRequest), 
+                    request, 
+                    InvlokeCallback
+                ));
+                return this;
+            }
 
             selector.SelectConnection(_connections)?.Send(request, callback);
 
             return this;
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
         }
 
-        public Task<(TResponse, RequestResult)> SendAsync<TRequest, TResponse>(TRequest request)
+        public Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>(TRequest request)
             where TRequest: class 
             where TResponse: class
         {
-            var completionSource = new TaskCompletionSource<(TResponse, RequestResult)>();
+            var completionSource = new TaskCompletionSource<(TResponse?, RequestResult)>();
 
             Send<TRequest, TResponse>(request, (response, result) => completionSource.SetResult((response, result)));
 
             return completionSource.Task;
         }
 
-        public ClusterConnection Send<TRequest, TResponse>(Action<TResponse, RequestResult> callback)
+        public ClusterConnection Send<TRequest, TResponse>(Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
-            if (!(_status == ClusterConnectionStatus.Active || _status == ClusterConnectionStatus.Connecting))
-                throw new InvalidOperationException("Invalid connection status.");
+            ClusterConnectionStatus status = _status;
+            if (!(status == ClusterConnectionStatus.Active || status == ClusterConnectionStatus.Connecting))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
-                throw new ProtocolException($"Request type '{typeof(TRequest).FullName}' is not supported.");
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    typeof(TRequest), 
+                    null,
+                    InvlokeCallback
+                ));
+                return this;
+            }
 
             selector.SelectConnection(_connections)?.Send(callback);
 
             return this;
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
         }
 
-        public Task<(TResponse, RequestResult)> SendAsync<TRequest, TResponse>()
+        public Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>()
             where TRequest: class 
             where TResponse: class
         {
-            var completionSource = new TaskCompletionSource<(TResponse, RequestResult)>();
+            var completionSource = new TaskCompletionSource<(TResponse?, RequestResult)>();
             
             Send<TRequest, TResponse>((response, result) => completionSource.SetResult((response, result)));
             
             return completionSource.Task;
         }
 
-        public void InvokeCallbacks()
+        public void Update()
         {
+            if (_status != ClusterConnectionStatus.Active)
+                return;
+
+            // Updating connections replacing the broken ones in the process.
             for (int i = 0; i < _connections.Length; ++i)
             {
-                ClientConnection? connection = Volatile.Read(ref _connections[i]);
+                ClientConnection? connection = _connections[i];
                 if (connection == null)
                     continue;
 
@@ -216,15 +238,17 @@ namespace PingPong.Engine
                 if (isConnectionBroken)
                 {
                     var newConnection = new ClientConnection(_requestNoGenerator, connection.Uri);
+                    Task connectionTask = newConnection.Connect(_settings.ReconnectionDelay);
                     
-                    newConnection
-                        .Connect(_settings.ReconnectionDelay)
-                        .ContinueWith(task => ReconnectionComplete(task, newConnection));
-
                     Volatile.Write(ref _connections[i], newConnection);
-                }
 
-                connection.InvokeCallbacks();
+                    int connIdx = i;
+                    connectionTask.ContinueWith(task => ReconnectionComplete(task, newConnection, connIdx));
+                }
+                
+                // Connection needs to be updated even if its broken. By updating broken connection,
+                // we complete requests whose responses has been delivered just before disconnect.
+                connection.Update();
 
                 if (isConnectionBroken)
                 {
@@ -232,16 +256,14 @@ namespace PingPong.Engine
                     {
                         foreach (ClientConnection.RequestQueueEntry request in connection.ConsumePendingRequests())
                         {
-                            try
-                            {
-                                _routingMap[request.Type]
-                                    .SelectConnection(_connections)
-                                    ?.Send(request);
-                            }
-                            catch (CommunicationException)
-                            {
-                                request.Callback?.Invoke(null, RequestResult.NotDelivered);
-                            }
+                            // At this point we can be sure that the routing map contains
+                            // entry for the request type. The broken connection got these
+                            // requests, hence they were routed through the map before.
+                            // In worst case the requests will be routed to the new connection
+                            // replacing the broken one.
+                            _routingMap[request.Type]
+                                .SelectConnection(_connections)
+                                ?.Send(request);
                         }
                     }
 
@@ -249,29 +271,71 @@ namespace PingPong.Engine
                 }
             }
 
-            void ReconnectionComplete(Task connectionTask, ClientConnection connection)
+            // Handlig requests on hold.
+            // Trying to deliver requests or complete them if expired. Requests which
+            // are still nowhere to deliver are enqueued back to be processed later.
+            var now = DateTime.Now;
+            int nRequestsNoPrecess = _requestsOnHold.Count;
+
+            while (nRequestsNoPrecess-- > 0)
+            {
+                _requestsOnHold.TryDequeue(out ClientConnection.RequestQueueEntry request);
+
+                if (now - request.CreationTime > _settings.MaxRequestHoldTime)
+                {
+                    request.Callback?.Invoke(null, RequestResult.DeliveryTimeout);
+                    continue;
+                }
+
+                bool delivered = false;
+                if (_routingMap.TryGetValue(request.Type, out ConnectionSelector selector))
+                {
+                    ClientConnection? conn = selector.SelectConnection(_connections);
+                    
+                    if (conn != null)
+                    {
+                        conn.Send(request);
+                        delivered = true;
+                    }
+                }
+
+                if (!delivered)
+                    _requestsOnHold.Enqueue(request);
+            }
+
+            void ReconnectionComplete(Task connectionTask, ClientConnection connection, int connSlotIdx)
             {
                 if (connectionTask.IsFaulted)
+                {
                     _logger.Error(connectionTask.Exception, "Reconnection to '{0}' failed.", connection.Uri);
+                    return;
+                }
                 
                 _logger.Info("Successfully reconnected to '{0}'.", connection.Uri);
+
+                // After every reconnection the connection should be registered,
+                // because it may start to support new request types.
+                RegisterConnection(connSlotIdx);
             }
         }
 
         private sealed class ConnectionSelector
         {
-            private readonly int[] _connectionsIdx;
+            private readonly List<int> _connectionsIdx = new List<int>();
 
             private readonly Random _random = new Random();
 
-            public ConnectionSelector(int[] connectionIdx)
+            public ConnectionSelector AddConnectionIndex(int i)
             {
-                _connectionsIdx = connectionIdx;
+                if (!_connectionsIdx.Contains(i))
+                    _connectionsIdx.Add(i);
+
+                return this;
             }
 
             public ClientConnection? SelectConnection(ClientConnection?[] connections)
             {
-                int connectionsCount = _connectionsIdx.Length;
+                int connectionsCount = _connectionsIdx.Count;
 
                 Span<int> active = stackalloc int[connectionsCount];
                 Span<int> connecting = stackalloc int[connectionsCount];

@@ -63,9 +63,9 @@ namespace PingPong.Server
                 var config = new LoggingConfiguration();
 
                 var consoleErrorTarget = new ConsoleTarget("consoleInfo");
-                consoleErrorTarget.Layout = "${longdate}|${level:uppercase=true}|${logger}|${message}\n${exception:format=tostring}";
+                consoleErrorTarget.Layout = "${longdate}|${level:uppercase=true}|${logger}|${message} ${exception:format=tostring}";
 
-                config.AddRule(LogLevel.Info, LogLevel.Fatal, new ConsoleTarget("consoleInfo"));
+                config.AddRule(LogLevel.Trace, LogLevel.Info, new ConsoleTarget("consoleInfo"));
                 config.AddRule(LogLevel.Error, LogLevel.Fatal, consoleErrorTarget);
 
                 LogManager.Configuration = config;

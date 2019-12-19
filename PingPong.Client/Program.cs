@@ -1,10 +1,10 @@
 using System;
-using System.Net;
 using System.Threading;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
 using PingPong.Engine;
+using PingPong.HostInterfaces;
 using PingPong.Messages;
 
 namespace PingPong.Client
@@ -23,28 +23,28 @@ namespace PingPong.Client
             for (int i = 0; i < requestCount; ++i)
             {
                 int arg = i;
-                connection.Send(new SquareRequest { Value = arg }, (SquareResponse response, RequestResult result) => {
-                    Console.WriteLine($"Square response received {arg}^2 = {response.Result}");
+                connection.Send(new SquareRequest { Value = arg }, (SquareResponse? response, RequestResult result) => {
+                    Console.WriteLine($"Square response received {arg}^2 = {response?.Result}");
                 });
             }
 
             for (int i = 0; i < requestCount; ++i)
                 connection.Send(new AddRequest { Value = i });
 
-            connection.Send(new GetSummRequest{}, (GetSummResponse response, RequestResult result) => {
-                Console.WriteLine($"Summ {response.Result}");
+            connection.Send(new GetSummRequest{}, (GetSummResponse? response, RequestResult result) => {
+                Console.WriteLine($"Summ {response?.Result}");
             });
 
             for (int i = 0; i < requestCount; ++i)
                 connection.Send(new WriteRequest { Message = $"Message {i}" });
 
-            connection.Send(new GetConfigValueRequest{}, (GetConfigValueResponse response, RequestResult result) => {
-                Console.WriteLine($"Configurable service returned '{response.Value}'.");
+            connection.Send(new GetConfigValueRequest{}, (GetConfigValueResponse? response, RequestResult result) => {
+                Console.WriteLine($"Configurable service returned '{response?.Value}'.");
             });
 
             while (connection.HasPendingRequests)
             {
-                connection.InvokeCallbacks();
+                connection.Update();
                 Thread.Sleep(1);
             }
 

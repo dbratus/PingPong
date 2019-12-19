@@ -34,6 +34,8 @@ namespace PingPong.Engine
             await Task.Yield();
 
             {
+                using ClusterConnection clusterConnection = CreateClusterConnection();
+
                 using IContainer container = BuildContainer();
                 using ILifetimeScope lifetimeScope = container.BeginLifetimeScope();
                 
@@ -46,6 +48,11 @@ namespace PingPong.Engine
                 _listeningSocket.Listen(10);
 
                 _logger.Info("Server started. Listening port {0}...", config.Port);
+
+                bool invokeCallbacks = true;
+
+                Task clusterConnectionTask = ConnectCluster();
+                Task callbacksInvocationTask = UpdateClusterConnection();
 
                 while (true)
                 {
@@ -64,6 +71,11 @@ namespace PingPong.Engine
 
                     ServeConnection(new ServerConnection(connectionSocket, dispatcher));
                 }
+
+                Volatile.Write(ref invokeCallbacks, false);
+
+                await clusterConnectionTask;
+                await callbacksInvocationTask;
 
                 async void ServeConnection(ServerConnection connection)
                 {
@@ -97,6 +109,43 @@ namespace PingPong.Engine
                     }
                 }
 
+                ClusterConnection CreateClusterConnection() =>
+                    new ClusterConnection(config.KnownHosts, new ClusterConnectionSettings {
+                        ReconnectionDelay = TimeSpan.FromSeconds(config.ClusterConnectionSettings.ReconnectionDelay)
+                    });
+
+                async Task ConnectCluster()
+                {
+                    _logger.Info("Connecting cluster after {0} sec.", config.ClusterConnectionSettings.ConnectionDelay);
+
+                    try
+                    {
+                        await clusterConnection.Connect(TimeSpan.FromSeconds(config.ClusterConnectionSettings.ConnectionDelay));
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "Failed to connect cluster. Interservice communication is not available.");
+                    }
+                }
+
+                async Task UpdateClusterConnection()
+                {
+                    try
+                    {
+                        while (Volatile.Read(ref invokeCallbacks))
+                        {
+                            clusterConnection.Update();
+
+                            await Task.Delay(TimeSpan.FromMilliseconds(config.ClusterConnectionSettings.InvokeCallbacksPeriodMs));
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Server callbacks are just async completions. They are not expected to throw exceptions.
+                        _logger.Fatal(ex, "Callbacks invocation faulted. No more callbacks will be invoked.");
+                    }
+                }
+
                 IContainer BuildContainer()
                 {
                     var containerBuilder = new ContainerBuilder();
@@ -107,6 +156,9 @@ namespace PingPong.Engine
                     containerBuilder
                         .RegisterInstance(new ServiceConfigsProvider(config.ServiceConfigs))
                         .As<IConfig>();
+                    containerBuilder
+                        .RegisterInstance(new ClusterConnectionWrapper(clusterConnection))
+                        .As<ICluster>();
                     
                     return containerBuilder.Build();
                 }
@@ -123,6 +175,30 @@ namespace PingPong.Engine
                 return;
 
             socket.Close();
+        }
+
+        private sealed class ClusterConnectionWrapper : ICluster
+        {
+            private readonly ClusterConnection _connection;
+
+            public ClusterConnectionWrapper(ClusterConnection connection)
+            {
+                _connection = connection;
+            }
+
+            public void Send<TRequest>(TRequest request) 
+                where TRequest : class =>
+                _connection.Send(request);
+
+            public Task<(TResponse?, RequestResult)> Send<TRequest, TResponse>(TRequest request)
+                where TRequest : class
+                where TResponse : class =>
+                _connection.SendAsync<TRequest, TResponse>(request);
+
+            public Task<(TResponse?, RequestResult)> Send<TRequest, TResponse>()
+                where TRequest : class
+                where TResponse : class =>
+                _connection.SendAsync<TRequest, TResponse>();
         }
     }
 }
