@@ -44,7 +44,6 @@ namespace PingPong.Engine
             _dispatcher = dispatcher;
             
             _socket = socket;
-            _socket.NoDelay = true;
 
             _messageReader = new DelimitedMessageReader(new NetworkStream(socket, System.IO.FileAccess.Read, false));
             _messageWriter = new DelimitedMessageWriter(new NetworkStream(socket, System.IO.FileAccess.Write, false));

@@ -33,6 +33,7 @@ namespace PingPong.Engine
 
             await Task.Yield();
 
+            try
             {
                 using ClusterConnection clusterConnection = CreateClusterConnection();
 
@@ -41,11 +42,12 @@ namespace PingPong.Engine
                 
                 var dispatcher = new ServiceDispatcher(container, _serviceTypes);
                 _listeningSocket = new Socket(SocketType.Stream, ProtocolType.IP);
+                _listeningSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
                 LogDispatcher();
 
                 _listeningSocket.Bind(new IPEndPoint(IPAddress.Any, config.Port));
-                _listeningSocket.Listen(10);
+                _listeningSocket.Listen(128);
 
                 _logger.Info("Server started. Listening port {0}...", config.Port);
 
@@ -162,6 +164,11 @@ namespace PingPong.Engine
                     
                     return containerBuilder.Build();
                 }
+            }
+            finally
+            {
+                _listeningSocket?.Dispose();
+                _listeningSocket = null;
             }
 
             _logger.Info("Service host stopped.");

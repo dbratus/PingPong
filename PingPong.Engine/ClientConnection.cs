@@ -97,7 +97,6 @@ namespace PingPong.Engine
         {
             _uri = uri;
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
-            _socket.NoDelay = true;
 
             _messageReader = new Lazy<DelimitedMessageReader>(() => new DelimitedMessageReader(new NetworkStream(_socket, System.IO.FileAccess.Read, false)));
             _messageWriter = new Lazy<DelimitedMessageWriter>(() => new DelimitedMessageWriter(new NetworkStream(_socket, System.IO.FileAccess.Write, false)));
