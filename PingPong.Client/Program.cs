@@ -15,7 +15,9 @@ namespace PingPong.Client
         {
             InitLogging();
 
-            using var connection = new ClusterConnection(new [] { "tcp://localhost:10000" });
+            using var connection = new ClusterConnection(new [] { 
+                "tcp://localhost:10000" 
+            });
                 
             connection.Connect().Wait();
 

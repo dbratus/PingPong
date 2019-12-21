@@ -192,9 +192,7 @@ namespace PingPong.Engine
         public ClientConnection Send<TRequest>() 
             where TRequest: class
         {
-            ClientConnectionStatus status = Status;
-            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException($"Invalid connection status {status}.");
+            ValidateSend(typeof(TRequest), null);
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, null));
             Interlocked.Increment(ref _pendingRequestsCount);
@@ -204,9 +202,7 @@ namespace PingPong.Engine
         public ClientConnection Send<TRequest>(TRequest request)
             where TRequest: class
         {
-            ClientConnectionStatus status = Status;
-            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException($"Invalid connection status {status}.");
+            ValidateSend(typeof(TRequest), null);
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, null));
             Interlocked.Increment(ref _pendingRequestsCount);
@@ -217,9 +213,7 @@ namespace PingPong.Engine
             where TRequest: class 
             where TResponse: class
         {
-            ClientConnectionStatus status = Status;
-            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException($"Invalid connection status {status}.");
+            ValidateSend(typeof(TRequest), typeof(TResponse));
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
@@ -234,9 +228,7 @@ namespace PingPong.Engine
             where TRequest: class 
             where TResponse: class
         {
-            ClientConnectionStatus status = Status;
-            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException($"Invalid connection status {status}.");
+            ValidateSend(typeof(TRequest), typeof(TResponse));
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
@@ -249,13 +241,38 @@ namespace PingPong.Engine
 
         internal ClientConnection Send(RequestQueueEntry request)
         {
-            ClientConnectionStatus status = Status;
-            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
-                throw new InvalidOperationException($"Invalid connection status {status}.");
+            ValidateSend(request.Type, null);
 
             _requestChan.Writer.TryWrite(request);
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
+        }
+
+        private void ValidateSend(Type request, Type? response)
+        {
+            ClientConnectionStatus status = Status;
+            if (!(status == ClientConnectionStatus.Connecting || status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
+                throw new InvalidOperationException($"Invalid connection status {status}.");
+
+            if (!_messageMap.TryGetMessageIdByType(request, out int requestMessageId))
+                throw new ProtocolException($"Request type {request.FullName} not supported");
+
+            if (response != null)
+            {
+                if (!_messageMap.TryGetMessageIdByType(response, out int responseMessageId))
+                    throw new ProtocolException($"Response type {response.FullName} not supported");
+
+                if (!_reqestResponseMap.TryGetValue(requestMessageId, out int expectedResponseMessageId))
+                    throw new ProtocolException($"Message type {request.FullName} is known, but not a request.");
+
+                if (responseMessageId != expectedResponseMessageId)
+                    throw new ProtocolException($"The message {response.FullName} is not a response for {request.FullName}");
+            }
+            else
+            {
+                if (!_reqestResponseMap.TryGetValue(requestMessageId, out int _))
+                    throw new ProtocolException($"Message type {request.FullName} is known, but not a request.");
+            }
         }
 
         public void Update()

@@ -15,6 +15,9 @@ namespace PingPong.Engine
         public int GetMessageIdByType(Type messageType) =>
             _messageIdsByType[messageType];
 
+        public bool TryGetMessageIdByType(Type messageType, out int messageId) =>
+            _messageIdsByType.TryGetValue(messageType, out messageId);
+
         public IEnumerable<(Type Type, int Id)> Enumerate() =>
             _messageIdsByType.Select(kv => (kv.Key, kv.Value));
 
