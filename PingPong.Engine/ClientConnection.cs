@@ -22,25 +22,28 @@ namespace PingPong.Engine
         private readonly Socket _socket;
         private readonly Lazy<DelimitedMessageReader> _messageReader;
         private readonly Lazy<DelimitedMessageWriter> _messageWriter;
+
         private readonly MessageMap _messageMap = new MessageMap();
         private readonly Dictionary<int, int> _reqestResponseMap 
             = new Dictionary<int, int>();
+        public IEnumerable<Type> SupportedRequestTypes =>
+            _reqestResponseMap.Keys.Select(_messageMap.GetMessageTypeById);
+
         private readonly RequestNoGenerator _requestNoGenerator;
 
         private Task? _requestPropagatorTask;
 
-        public IEnumerable<Type> SupportedRequestTypes =>
-            _reqestResponseMap.Keys.Select(_messageMap.GetMessageTypeById);
-
         internal struct RequestQueueEntry
         {
+            public readonly int InstanceId;
             public readonly Type Type;
             public readonly object? Body;
             public readonly Action<object?, RequestResult>? Callback;
             public readonly DateTime CreationTime;
 
-            public RequestQueueEntry(Type type, object? body, Action<object?, RequestResult>? callback)
+            public RequestQueueEntry(int instanceId, Type type, object? body, Action<object?, RequestResult>? callback)
             {
+                InstanceId = instanceId;
                 Type = type;
                 Body = body;
                 Callback = callback;
@@ -87,6 +90,10 @@ namespace PingPong.Engine
             get { return (ClientConnectionStatus)_status; }
             private set { _status = (int)value; }
         }
+
+        private volatile int _instanceId = -1;
+        public int InstanceId =>
+            _instanceId;
 
         public ClientConnection(string uri) :
             this(new RequestNoGenerator(), uri)
@@ -159,6 +166,8 @@ namespace PingPong.Engine
 
                 var preamble = await _messageReader.Value.Read<Preamble>();
 
+                _instanceId = preamble.InstanceId;
+
                 foreach (MessageIdMapEntry ent in preamble.MessageIdMap)
                 {
                     Type messageType = Type.GetType(ent.MessageType);
@@ -189,33 +198,33 @@ namespace PingPong.Engine
             }
         }
 
-        public ClientConnection Send<TRequest>() 
+        public ClientConnection Send<TRequest>(bool instanceAffinity) 
             where TRequest: class
         {
             ValidateSend(typeof(TRequest), null);
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, null));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, typeof(TRequest), null, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
 
-        public ClientConnection Send<TRequest>(TRequest request)
+        public ClientConnection Send<TRequest>(bool instanceAffinity, TRequest request)
             where TRequest: class
         {
             ValidateSend(typeof(TRequest), null);
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, null));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, typeof(TRequest), request, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
 
-        public ClientConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse?, RequestResult> callback)
+        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, TRequest request, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
             ValidateSend(typeof(TRequest), typeof(TResponse));
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), request, InvlokeCallback));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -224,13 +233,13 @@ namespace PingPong.Engine
             };
         }
 
-        public ClientConnection Send<TRequest, TResponse>(Action<TResponse?, RequestResult> callback)
+        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
             ValidateSend(typeof(TRequest), typeof(TResponse));
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(typeof(TRequest), null, InvokeCallback));
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 

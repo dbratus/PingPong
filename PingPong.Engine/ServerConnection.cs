@@ -15,6 +15,7 @@ namespace PingPong.Engine
         
         private readonly ServiceDispatcher _dispatcher;
         private readonly Socket _socket;
+        private readonly ServiceHostConfig _config;
         private readonly DelimitedMessageReader _messageReader;
         private readonly DelimitedMessageWriter _messageWriter;
 
@@ -39,12 +40,11 @@ namespace PingPong.Engine
         public Socket Socket =>
             _socket;
 
-        public ServerConnection(Socket socket, ServiceDispatcher dispatcher)
+        public ServerConnection(Socket socket, ServiceDispatcher dispatcher, ServiceHostConfig config)
         {
             _dispatcher = dispatcher;
-            
             _socket = socket;
-
+            _config = config;
             _messageReader = new DelimitedMessageReader(new NetworkStream(socket, System.IO.FileAccess.Read, false));
             _messageWriter = new DelimitedMessageWriter(new NetworkStream(socket, System.IO.FileAccess.Write, false));
             _responsePropagatorTask = PropagateRequests();
@@ -67,6 +67,7 @@ namespace PingPong.Engine
 
             var preamle = new Preamble
             {
+                InstanceId = _config.InstanceId,
                 MessageIdMap = _dispatcher
                     .MessageMap
                     .Enumerate()

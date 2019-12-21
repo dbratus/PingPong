@@ -6,9 +6,12 @@ namespace PingPong.Engine
     public class Preamble
     {
         [Key(0)]
-        public MessageIdMapEntry[] MessageIdMap { get; set; } = new MessageIdMapEntry[0];
+        public int InstanceId { get; set; } = -1;
 
         [Key(1)]
+        public MessageIdMapEntry[] MessageIdMap { get; set; } = new MessageIdMapEntry[0];
+
+        [Key(2)]
         public RequestResponseMapEntry[] RequestResponseMap { get; set; } = new RequestResponseMapEntry[0];
     }
 

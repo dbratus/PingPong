@@ -27,7 +27,9 @@ namespace PingPong.Services
             if (result != RequestResult.OK)
                 _logger.Error("Failed to transfer the message");
 
-            return new TransferMessageResponse {};
+            return new TransferMessageResponse {
+                ServedByInstance = response?.ServedByInstance ?? -1
+            };
         } 
     }
 
@@ -36,10 +38,12 @@ namespace PingPong.Services
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
         private readonly IReceiverServiceDatabase _db;
+        private readonly ISession _session;
 
-        public ReceiverService(IReceiverServiceDatabase db)
+        public ReceiverService(IReceiverServiceDatabase db, ISession session)
         {
             _db = db;
+            _session = session;
         }
 
         public ReceiveMessageResponse ReceiveMessage(ReceiveMessageRequest request)
@@ -48,7 +52,9 @@ namespace PingPong.Services
 
             _db.Store(request.Message);
 
-            return new ReceiveMessageResponse {};
+            return new ReceiveMessageResponse {
+                ServedByInstance = _session.InstanceId
+            };
         }
 
         public GetTransferredMessageResponse GetTransferredMessage(GetTransferredMessageRequest request)

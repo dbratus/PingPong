@@ -7,6 +7,8 @@ namespace PingPong.Engine
     {
         public int Port { get; set; }
 
+        public int InstanceId { get; set; }
+
         public ClusterConnectionSettingsSection ClusterConnectionSettings { get; set; } =
             new ClusterConnectionSettingsSection();
 

@@ -33,12 +33,17 @@ namespace PingPong.Engine
 
             await Task.Yield();
 
+            LogManager.Configuration.Variables["instanceId"] = config.InstanceId.ToString();
+
             try
             {
+                var session = new Session();
+
                 using ClusterConnection clusterConnection = CreateClusterConnection();
                 using IContainer container = BuildContainer();
                 
                 var dispatcher = new ServiceDispatcher(container, _serviceTypes);
+
                 _listeningSocket = new Socket(SocketType.Stream, ProtocolType.IP);
                 _listeningSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
@@ -67,9 +72,9 @@ namespace PingPong.Engine
                         break;
                     }
 
-                    _logger.Info("Client connected {0}.", connectionSocket.RemoteEndPoint.Serialize());
+                    _logger.Info("Client connected {0}.", ((IPEndPoint)connectionSocket.RemoteEndPoint).Address);
 
-                    ServeConnection(new ServerConnection(connectionSocket, dispatcher));
+                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config));
                 }
 
                 Volatile.Write(ref invokeCallbacks, false);
@@ -79,17 +84,24 @@ namespace PingPong.Engine
 
                 async void ServeConnection(ServerConnection connection)
                 {
+                    var clientRemoteAddress = ((IPEndPoint)connection.Socket.RemoteEndPoint).Address;
+
                     try
                     {
+                        session.SetData(new Session.Data {
+                            InstanceId = config.InstanceId,
+                            ClientRemoteAddress = clientRemoteAddress
+                        });
+
                         await connection.Serve();
                     }
                     catch (Exception ex)
                     {
-                        _logger.Error(ex, "Connection {0} faulted.", connection.Socket.RemoteEndPoint.Serialize());
+                        _logger.Error(ex, "Connection {0} faulted.", clientRemoteAddress);
                     }
                     finally
                     {
-                        _logger.Info("Client disconnected {0}.", connection.Socket.RemoteEndPoint.Serialize());
+                        _logger.Info("Client disconnected {0}.", clientRemoteAddress);
                         connection.Dispose();
                     }
                 }
@@ -160,6 +172,9 @@ namespace PingPong.Engine
                     containerBuilder
                         .RegisterInstance(new ClusterConnectionWrapper(clusterConnection))
                         .As<ICluster>();
+                    containerBuilder
+                        .RegisterInstance(session)
+                        .As<ISession>();
                     
                     var containerBuilderWrapper = new ContainerBuilderWrapper(containerBuilder);
 

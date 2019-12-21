@@ -12,6 +12,8 @@ namespace PingPong.Messages
     [MessagePackObject]
     public class TransferMessageResponse
     {
+        [Key(0)]
+        public int ServedByInstance { get; set; }
     }
 
     [MessagePackObject]
@@ -24,6 +26,8 @@ namespace PingPong.Messages
     [MessagePackObject]
     public class ReceiveMessageResponse
     {
+        [Key(0)]
+        public int ServedByInstance { get; set; }
     }
 
     [MessagePackObject]

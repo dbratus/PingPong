@@ -1,5 +1,6 @@
 {
     "Port": 10001,
+    "InstanceId": 1,
 
     "KnownHosts": [
         "tcp://localhost:10000",

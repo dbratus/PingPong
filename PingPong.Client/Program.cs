@@ -16,7 +16,8 @@ namespace PingPong.Client
             InitLogging();
 
             using var connection = new ClusterConnection(new [] { 
-                "tcp://localhost:10000" 
+                "tcp://localhost:10000",
+                "tcp://localhost:10001" 
             });
                 
             connection.Connect().Wait();
@@ -31,9 +32,9 @@ namespace PingPong.Client
             }
 
             for (int i = 0; i < requestCount; ++i)
-                connection.Send(new AddRequest { Value = i });
+                connection.Send(0, new AddRequest { Value = i });
 
-            connection.Send(new GetSummRequest{}, (GetSummResponse? response, RequestResult result) => {
+            connection.Send(0, new GetSummRequest{}, (GetSummResponse? response, RequestResult result) => {
                 Console.WriteLine($"Summ {response?.Result}");
             });
 
@@ -47,7 +48,7 @@ namespace PingPong.Client
             connection.Send(new TransferMessageRequest { Message = "Transferred message" }, (TransferMessageResponse? response, RequestResult result) => {
                 if (result == RequestResult.OK)
                 {
-                    connection.Send(new GetTransferredMessageRequest {}, (GetTransferredMessageResponse? response, RequestResult result) => {
+                    connection.Send(response?.ServedByInstance ?? -1, new GetTransferredMessageRequest {}, (GetTransferredMessageResponse? response, RequestResult result) => {
                         if (result == RequestResult.OK)
                         {
                             Console.WriteLine($"Transferred message returned '{response?.Message}'.");
