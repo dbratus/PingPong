@@ -9,6 +9,8 @@ wd = path.join(os.getcwd(), 'PingPong.Server')
 
 host_processes = []
 
+subprocess.run('dotnet build', shell=True, cwd=wd)
+
 for i in range(1, HOST_COUNT + 1):
     proc = subprocess.Popen('dotnet run -- Host{0}.config.json'.format(i), shell=True, cwd=wd)
     host_processes.append(proc)

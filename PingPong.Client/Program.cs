@@ -44,6 +44,18 @@ namespace PingPong.Client
                 Console.WriteLine($"Configurable service returned '{response?.Value}'.");
             });
 
+            connection.Send(new TransferMessageRequest { Message = "Transferred message" }, (TransferMessageResponse? response, RequestResult result) => {
+                if (result == RequestResult.OK)
+                {
+                    connection.Send(new GetTransferredMessageRequest {}, (GetTransferredMessageResponse? response, RequestResult result) => {
+                        if (result == RequestResult.OK)
+                        {
+                            Console.WriteLine($"Transferred message returned '{response?.Message}'.");
+                        }
+                    });
+                }
+            });
+
             while (connection.HasPendingRequests)
             {
                 connection.Update();

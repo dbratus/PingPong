@@ -36,9 +36,7 @@ namespace PingPong.Engine
             try
             {
                 using ClusterConnection clusterConnection = CreateClusterConnection();
-
                 using IContainer container = BuildContainer();
-                using ILifetimeScope lifetimeScope = container.BeginLifetimeScope();
                 
                 var dispatcher = new ServiceDispatcher(container, _serviceTypes);
                 _listeningSocket = new Socket(SocketType.Stream, ProtocolType.IP);
@@ -154,7 +152,7 @@ namespace PingPong.Engine
                     
                     containerBuilder
                         .RegisterTypes(_serviceTypes.ToArray())
-                        .InstancePerLifetimeScope();
+                        .SingleInstance();
                     containerBuilder
                         .RegisterInstance(new ServiceConfigsProvider(config.ServiceConfigs))
                         .As<IConfig>();
