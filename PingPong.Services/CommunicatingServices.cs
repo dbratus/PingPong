@@ -35,26 +35,51 @@ namespace PingPong.Services
     {
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
-        private string _lastMessageReceived = "";
+        private readonly IReceiverServiceDatabase _db;
 
-        public ReceiverService()
+        public ReceiverService(IReceiverServiceDatabase db)
         {
-            _logger.Info("Instance created");
+            _db = db;
         }
 
         public ReceiveMessageResponse ReceiveMessage(ReceiveMessageRequest request)
         {
             _logger.Info("Transferred message received '{0}'.", request.Message);
 
-            _lastMessageReceived = request.Message;
+            _db.Store(request.Message);
+
             return new ReceiveMessageResponse {};
         }
 
         public GetTransferredMessageResponse GetTransferredMessage(GetTransferredMessageRequest request)
         {
-            _logger.Info("Transferred message requested. '{0}' is available.", _lastMessageReceived);
+            string message = _db.Get();
 
-            return new GetTransferredMessageResponse { Message = _lastMessageReceived };
+            _logger.Info("Transferred message requested. '{0}' is available.", message);
+
+            return new GetTransferredMessageResponse { Message = message };
         }
+
+        public static void SetupContainer(IContainerBuilder containerBuilder, IConfig config)
+        {
+            containerBuilder.Register<ReceiverServiceDatabase, IReceiverServiceDatabase>();
+        }
+    }
+
+    public interface IReceiverServiceDatabase
+    {
+        void Store(string message);
+        string Get();
+    }
+
+    public class ReceiverServiceDatabase : IReceiverServiceDatabase
+    {
+        private string _storedMessage = "";
+
+        public void Store(string message) =>
+            _storedMessage = message;
+
+        public string Get() =>
+            _storedMessage;
     }
 }

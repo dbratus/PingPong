@@ -149,18 +149,54 @@ namespace PingPong.Engine
                 IContainer BuildContainer()
                 {
                     var containerBuilder = new ContainerBuilder();
+                    var serviceConfigsProvider = new ServiceConfigsProvider(config.ServiceConfigs);
                     
                     containerBuilder
                         .RegisterTypes(_serviceTypes.ToArray())
                         .SingleInstance();
                     containerBuilder
-                        .RegisterInstance(new ServiceConfigsProvider(config.ServiceConfigs))
+                        .RegisterInstance(serviceConfigsProvider)
                         .As<IConfig>();
                     containerBuilder
                         .RegisterInstance(new ClusterConnectionWrapper(clusterConnection))
                         .As<ICluster>();
                     
+                    var containerBuilderWrapper = new ContainerBuilderWrapper(containerBuilder);
+
+                    foreach (Type serviceType in _serviceTypes)
+                    {
+                        try
+                        {
+                            serviceType
+                                .GetMethods()
+                                .FirstOrDefault(IsContainerSetupMethod)
+                                ?.Invoke(null, new object[] { containerBuilderWrapper, serviceConfigsProvider });
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Error(ex, "Service {0} container setup faulted.", serviceType.FullName);
+                        }
+                    }
+
                     return containerBuilder.Build();
+
+                    bool IsContainerSetupMethod(MethodInfo methodInfo)
+                    {
+                        if (!(methodInfo.IsStatic && methodInfo.IsPublic))
+                            return false;
+
+                        ParameterInfo[] methodParams = methodInfo.GetParameters();
+                        if (methodParams.Length != 2)
+                            return false;
+
+                        if (methodParams[0].ParameterType != typeof(IContainerBuilder))
+                            return false;
+                        
+                        if (methodParams[1].ParameterType != typeof(IConfig))
+                            return false;
+
+                        return true;
+                    }
                 }
             }
             finally
@@ -204,6 +240,28 @@ namespace PingPong.Engine
                 where TRequest : class
                 where TResponse : class =>
                 _connection.SendAsync<TRequest, TResponse>();
+        }
+
+        private sealed class ContainerBuilderWrapper : IContainerBuilder
+        {
+            private readonly ContainerBuilder _containerBuilder;
+
+            public ContainerBuilderWrapper(ContainerBuilder containerBuilder)
+            {
+                _containerBuilder = containerBuilder;
+            }
+
+            public void Register<T>() =>
+                _containerBuilder
+                    .RegisterType<T>()
+                    .SingleInstance();
+
+            public void Register<T, TInterface>()
+                where T: TInterface =>
+                _containerBuilder
+                    .RegisterType<T>()
+                    .As<TInterface>()
+                    .SingleInstance();
         }
     }
 }
