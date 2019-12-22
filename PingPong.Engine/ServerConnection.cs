@@ -65,7 +65,7 @@ namespace PingPong.Engine
             // Yield to get rid of the sync section.
             await Task.Yield();
 
-            var preamle = new Preamble
+            var preamble = new Preamble
             {
                 InstanceId = _config.InstanceId,
                 MessageIdMap = _dispatcher
@@ -85,7 +85,7 @@ namespace PingPong.Engine
                     .ToArray()
             };
 
-            await _messageWriter.Write(preamle);
+            await _messageWriter.Write(preamble);
 
             while (true)
             {
