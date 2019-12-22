@@ -101,31 +101,44 @@ namespace PingPong.Engine
                     requestBody = await _messageReader.Read(requestType);
                 }
 
-                object? responseBody = null;
-                int messageId = -1;
-                var responseFalgs = ResponseFlags.None;
-
-                try
+                if ((requestHeader.Flags & RequestFlags.NoResponse) == RequestFlags.None)
                 {
-                    responseBody = await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+                    object? responseBody = null;
+                    int messageId = -1;
+                    var responseFalgs = ResponseFlags.None;
+                    try
+                    {
+                        responseBody = await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
 
-                    if (responseBody == null)
-                        responseFalgs |= ResponseFlags.NoBody;
-                    else
-                        messageId = _dispatcher.MessageMap.GetMessageIdByType(responseBody.GetType());
+                        if (responseBody == null)
+                            responseFalgs |= ResponseFlags.NoBody;
+                        else
+                            messageId = _dispatcher.MessageMap.GetMessageIdByType(responseBody.GetType());
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "Request {0} faulted.", requestHeader.RequestNo);
+
+                        responseFalgs |= ResponseFlags.Error;
+                    }
+
+                    await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                        RequestNo = requestHeader.RequestNo,
+                        MessageId = messageId,
+                        Flags = responseFalgs
+                    }, responseBody));
                 }
-                catch(Exception ex)
+                else
                 {
-                    _logger.Error(ex, "Request {0} faulted.", requestHeader.RequestNo);
-
-                    responseFalgs |= ResponseFlags.Error;
+                    try
+                    {
+                        await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error(ex, "Request {0} faulted.", requestHeader.RequestNo);
+                    }
                 }
-
-                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
-                    RequestNo = requestHeader.RequestNo,
-                    MessageId = messageId,
-                    Flags = responseFalgs
-                }, responseBody));
             }
         }
 

@@ -20,6 +20,7 @@ namespace PingPong.Engine
     public enum RequestFlags
     {
         None = 0,
-        NoBody = 1
+        NoBody = 1,
+        NoResponse = 2
     }
 }

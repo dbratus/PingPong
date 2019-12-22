@@ -151,8 +151,6 @@ namespace PingPong.Engine
 
         private sealed class AsyncOneWayRequestHandler : RequestHandlerBase
         {
-            private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
-
             public AsyncOneWayRequestHandler(Lazy<object> serviceInstance, MethodInfo method) : base(serviceInstance, method)
             {
             }
@@ -162,12 +160,20 @@ namespace PingPong.Engine
 
             public override Task<object?> Invoke(object? request)
             {
+                var taskCompletion = new TaskCompletionSource<object?>();
+
                 ((Task)_method.Invoke(_serviceInstance.Value, new object?[] { request }))
                     .ContinueWith(t => {
                         if (t.IsFaulted)
-                            _logger.Error(t.Exception, "Method {0}.{1} faulted.", _serviceInstance.Value.GetType().Name, _method.Name);
+                        {
+                            taskCompletion.SetException(t.Exception);
+                            return;
+                        }
+
+                        taskCompletion.SetResult(null);
                     });
-                return Task.FromResult<object?>(null);
+                
+                return taskCompletion.Task;
             }
         }
 

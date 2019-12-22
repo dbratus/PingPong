@@ -354,6 +354,8 @@ namespace PingPong.Engine
 
                     if (nextRequest.Callback != null)
                         _requestsWaitingForResponse.TryAdd(requestNo, nextRequest);
+                    else
+                        flags |= RequestFlags.NoResponse;
 
                     await _messageWriter.Value.Write(new RequestHeader {
                         RequestNo = requestNo,
