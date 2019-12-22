@@ -233,6 +233,20 @@ namespace PingPong.Engine
             };
         }
 
+        public ClientConnection Send<TRequest>(bool instanceAffinity, TRequest request, Action<RequestResult> callback)
+            where TRequest: class
+        {
+            ValidateSend(typeof(TRequest), null);
+
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, typeof(TRequest), request, InvlokeCallback));
+            Interlocked.Increment(ref _pendingRequestsCount);
+            return this;
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback(result);
+            };
+        }
+
         public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
@@ -245,6 +259,21 @@ namespace PingPong.Engine
 
             void InvokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
+            };
+        }
+
+        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, Action<RequestResult> callback)
+            where TRequest: class 
+            where TResponse: class
+        {
+            ValidateSend(typeof(TRequest), typeof(TResponse));
+
+            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, typeof(TRequest), null, InvokeCallback));
+            Interlocked.Increment(ref _pendingRequestsCount);
+            return this;
+
+            void InvokeCallback(object? responseBody, RequestResult result) {
+                callback(result);
             };
         }
 

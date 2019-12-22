@@ -38,7 +38,6 @@ namespace PingPong.Engine
             try
             {
                 var session = new Session();
-
                 using ClusterConnection clusterConnection = CreateClusterConnection();
                 using IContainer container = BuildContainer();
                 
@@ -170,8 +169,9 @@ namespace PingPong.Engine
                         .RegisterInstance(serviceConfigsProvider)
                         .As<IConfig>();
                     containerBuilder
-                        .RegisterInstance(new ClusterConnectionWrapper(clusterConnection))
-                        .As<ICluster>();
+                        .RegisterInstance(clusterConnection)
+                        .As<ICluster>()
+                        .ExternallyOwned();
                     containerBuilder
                         .RegisterInstance(session)
                         .As<ISession>();
@@ -231,30 +231,6 @@ namespace PingPong.Engine
                 return;
 
             socket.Close();
-        }
-
-        private sealed class ClusterConnectionWrapper : ICluster
-        {
-            private readonly ClusterConnection _connection;
-
-            public ClusterConnectionWrapper(ClusterConnection connection)
-            {
-                _connection = connection;
-            }
-
-            public void Send<TRequest>(TRequest request) 
-                where TRequest : class =>
-                _connection.Send(request);
-
-            public Task<(TResponse?, RequestResult)> Send<TRequest, TResponse>(TRequest request)
-                where TRequest : class
-                where TResponse : class =>
-                _connection.SendAsync<TRequest, TResponse>(request);
-
-            public Task<(TResponse?, RequestResult)> Send<TRequest, TResponse>()
-                where TRequest : class
-                where TResponse : class =>
-                _connection.SendAsync<TRequest, TResponse>();
         }
 
         private sealed class ContainerBuilderWrapper : IContainerBuilder

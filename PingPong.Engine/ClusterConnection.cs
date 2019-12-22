@@ -9,7 +9,7 @@ using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
 {
-    public sealed class ClusterConnection : IDisposable
+    public sealed class ClusterConnection : IDisposable, ICluster
     {
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
@@ -51,6 +51,9 @@ namespace PingPong.Engine
 
         public void Dispose()
         {
+            if (_status == ClusterConnectionStatus.Disposed)
+                throw new InvalidOperationException("Connection already disposed.");
+
             foreach (ClientConnection? conn in _connections)
                 conn?.Dispose();
         
@@ -124,7 +127,7 @@ namespace PingPong.Engine
             }
         }
 
-        public ClusterConnection Send<TRequest>()
+        public void Send<TRequest>()
             where TRequest: class 
         {
             ValidateSend();
@@ -132,14 +135,13 @@ namespace PingPong.Engine
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, typeof(TRequest), null, null));
-                return this;
+                return;
             }
 
             selector.SelectConnection(_connections)?.Send<TRequest>(false);
-            return this;
         }
 
-        public ClusterConnection Send<TRequest>(int instanceId)
+        public void Send<TRequest>(int instanceId)
             where TRequest: class 
         {
             ValidateSend();
@@ -147,7 +149,7 @@ namespace PingPong.Engine
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(instanceId, typeof(TRequest), null, null));
-                return this;
+                return;
             }
 
             ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
@@ -155,10 +157,9 @@ namespace PingPong.Engine
                 throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
 
             conn.Send<TRequest>(true);
-            return this;
         }
 
-        public ClusterConnection Send<TRequest>(TRequest request)
+        public void Send<TRequest>(TRequest request)
             where TRequest: class 
         {
             ValidateSend();
@@ -166,14 +167,13 @@ namespace PingPong.Engine
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, typeof(TRequest), request, null));
-                return this;
+                return;
             }
 
             selector.SelectConnection(_connections)?.Send(false, request);
-            return this;
         }
 
-        public ClusterConnection Send<TRequest>(int instanceId, TRequest request)
+        public void Send<TRequest>(int instanceId, TRequest request)
             where TRequest: class 
         {
             ValidateSend();
@@ -181,7 +181,7 @@ namespace PingPong.Engine
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(instanceId, typeof(TRequest), request, null));
-                return this;
+                return;
             }
 
             ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
@@ -189,10 +189,9 @@ namespace PingPong.Engine
                 throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
 
             conn.Send(true, request);
-            return this;
         }
 
-        public ClusterConnection Send<TRequest, TResponse>(TRequest request, Action<TResponse?, RequestResult> callback)
+        public void Send<TRequest, TResponse>(TRequest request, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
@@ -206,18 +205,40 @@ namespace PingPong.Engine
                     request, 
                     InvlokeCallback
                 ));
-                return this;
+                return;
             }
 
             selector.SelectConnection(_connections)?.Send(false, request, callback);
-            return this;
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
             };
         }
 
-        public ClusterConnection Send<TRequest, TResponse>(int instanceId, TRequest request, Action<TResponse?, RequestResult> callback)
+        public void Send<TRequest>(TRequest request, Action<RequestResult> callback)
+            where TRequest: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    -1,
+                    typeof(TRequest), 
+                    request, 
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            selector.SelectConnection(_connections)?.Send(false, request, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback(result);
+            };
+        }
+
+        public void Send<TRequest, TResponse>(int instanceId, TRequest request, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
@@ -231,7 +252,7 @@ namespace PingPong.Engine
                     request, 
                     InvlokeCallback
                 ));
-                return this;
+                return;
             }
 
             ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
@@ -239,10 +260,36 @@ namespace PingPong.Engine
                 throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
 
             conn.Send(true, request, callback);
-            return this;
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
+            };
+        }
+
+        public void Send<TRequest>(int instanceId, TRequest request, Action<RequestResult> callback)
+            where TRequest: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    instanceId,
+                    typeof(TRequest), 
+                    request, 
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
+            if (conn == null)
+                throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
+
+            conn.Send(true, request, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback(result);
             };
         }
 
@@ -255,6 +302,19 @@ namespace PingPong.Engine
             Send<TRequest, TResponse>(
                 request, 
                 (response, result) => completionSource.SetResult((response, result))
+            );
+
+            return completionSource.Task;
+        }
+
+        public Task<RequestResult> SendAsync<TRequest>(TRequest request)
+            where TRequest: class
+        {
+            var completionSource = new TaskCompletionSource<RequestResult>();
+
+            Send<TRequest>(
+                request, 
+                result => completionSource.SetResult(result)
             );
 
             return completionSource.Task;
@@ -275,7 +335,21 @@ namespace PingPong.Engine
             return completionSource.Task;
         }
 
-        public ClusterConnection Send<TRequest, TResponse>(Action<TResponse?, RequestResult> callback)
+        public Task<RequestResult> SendAsync<TRequest>(int instanceId, TRequest request)
+            where TRequest: class
+        {
+            var completionSource = new TaskCompletionSource<RequestResult>();
+
+            Send<TRequest>(
+                instanceId, 
+                request, 
+                result => completionSource.SetResult(result)
+            );
+
+            return completionSource.Task;
+        }
+
+        public void Send<TRequest, TResponse>(Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
@@ -289,19 +363,40 @@ namespace PingPong.Engine
                     null,
                     InvlokeCallback
                 ));
-                return this;
+                return;
             }
 
             selector.SelectConnection(_connections)?.Send(false, callback);
-
-            return this;
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
             };
         }
 
-        public ClusterConnection Send<TRequest, TResponse>(int instanceId, Action<TResponse?, RequestResult> callback)
+        public void Send<TRequest>(Action<RequestResult> callback)
+            where TRequest: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    -1,
+                    typeof(TRequest), 
+                    null,
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            selector.SelectConnection(_connections)?.Send(false, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback(result);
+            };
+        }
+
+        public void Send<TRequest, TResponse>(int instanceId, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
@@ -315,7 +410,7 @@ namespace PingPong.Engine
                     null,
                     InvlokeCallback
                 ));
-                return this;
+                return;
             }
 
             ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
@@ -323,15 +418,41 @@ namespace PingPong.Engine
                 throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
 
             conn.Send(true, callback);
-            return this;
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
             };
         }
 
+        public void Send<TRequest>(int instanceId, Action<RequestResult> callback)
+            where TRequest: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    instanceId,
+                    typeof(TRequest), 
+                    null,
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
+            if (conn == null)
+                throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
+
+            conn.Send(true, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback(result);
+            };
+        }
+
         public Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>()
-            where TRequest: class 
+            where TRequest: class
             where TResponse: class
         {
             var completionSource = new TaskCompletionSource<(TResponse?, RequestResult)>();
@@ -339,7 +460,19 @@ namespace PingPong.Engine
             Send<TRequest, TResponse>(
                 (response, result) => completionSource.SetResult((response, result))
             );
+
+            return completionSource.Task;
+        }
+
+        public Task<RequestResult> SendAsync<TRequest>()
+            where TRequest: class
+        {
+            var completionSource = new TaskCompletionSource<RequestResult>();
             
+            Send<TRequest>(
+                result => completionSource.SetResult(result)
+            );
+
             return completionSource.Task;
         }
 
@@ -352,6 +485,19 @@ namespace PingPong.Engine
             Send<TRequest, TResponse>(
                 instanceId,
                 (response, result) => completionSource.SetResult((response, result))
+            );
+            
+            return completionSource.Task;
+        }
+
+        public Task<RequestResult> SendAsync<TRequest>(int instanceId)
+            where TRequest: class
+        {
+            var completionSource = new TaskCompletionSource<RequestResult>();
+            
+            Send<TRequest>(
+                instanceId,
+                result => completionSource.SetResult(result)
             );
             
             return completionSource.Task;

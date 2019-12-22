@@ -20,7 +20,7 @@ namespace PingPong.Services
         {
             _logger.Info("Transferring message '{0}'.", request.Message);
 
-            (var response, RequestResult result) = await _cluster.Send<ReceiveMessageRequest, ReceiveMessageResponse>(new ReceiveMessageRequest {
+            (var response, RequestResult result) = await _cluster.SendAsync<ReceiveMessageRequest, ReceiveMessageResponse>(new ReceiveMessageRequest {
                 Message = request.Message
             });
 
