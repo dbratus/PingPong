@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading.Tasks;
@@ -77,7 +78,7 @@ namespace PingPong.Engine
                 }
             }
 
-            _requestResponseMessageMap = requestResponseMessageMap.ToArray();
+            _requestResponseMessageMap = requestResponseMessageMap.Distinct().ToArray();
         }
 
         public IEnumerable<(int RequestId, int ResponseId)> GetRequestResponseMap() =>

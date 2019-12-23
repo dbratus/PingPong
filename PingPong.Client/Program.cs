@@ -57,6 +57,10 @@ namespace PingPong.Client
                 }
             });
 
+            connection.Send(new PublishRequest {
+                Message = "Published message"
+            }, result => {});
+
             while (connection.HasPendingRequests)
             {
                 connection.Update();
