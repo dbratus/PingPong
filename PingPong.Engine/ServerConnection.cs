@@ -12,12 +12,15 @@ namespace PingPong.Engine
     sealed class ServerConnection : IDisposable
     {
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
-        
+
         private readonly ServiceDispatcher _dispatcher;
         private readonly Socket _socket;
         private readonly ServiceHostConfig _config;
         private readonly DelimitedMessageReader _messageReader;
         private readonly DelimitedMessageWriter _messageWriter;
+
+        private readonly ConcurrentDictionary<Task, object?> _requestHanderTasks =
+            new ConcurrentDictionary<Task, object?>();
 
         private struct ResponseQueueEntry
         {
@@ -52,6 +55,11 @@ namespace PingPong.Engine
 
         public void Dispose()
         {
+            foreach(Task requestHandlerTask in _requestHanderTasks.Keys.ToArray())
+                requestHandlerTask.Wait();
+            
+            _requestHanderTasks.Clear();
+
             _responseChan.Writer.Complete();
             _responsePropagatorTask.Wait();
 
@@ -101,43 +109,69 @@ namespace PingPong.Engine
                     requestBody = await _messageReader.Read(requestType);
                 }
 
+                Task requestHandlerTask;
                 if ((requestHeader.Flags & RequestFlags.NoResponse) == RequestFlags.None)
+                    requestHandlerTask = HandleWithResponse(requestHeader, requestBody);
+                else
+                    requestHandlerTask = HandleWithoutResponse(requestHeader, requestBody);
+                
+                _requestHanderTasks.TryAdd(requestHandlerTask, null);
+
+                CompleteRequestHandlerTask(requestHeader.RequestNo, requestHandlerTask);
+            }
+
+            foreach(Task requestHandlerTask in _requestHanderTasks.Keys.ToArray())
+                await requestHandlerTask;
+
+            async Task HandleWithResponse(RequestHeader requestHeader, object? requestBody)
+            {
+                await Task.Yield();
+
+                object? responseBody = null;
+                int messageId = -1;
+                var responseFalgs = ResponseFlags.None;
+
+                try
                 {
-                    object? responseBody = null;
-                    int messageId = -1;
-                    var responseFalgs = ResponseFlags.None;
-                    try
-                    {
-                        responseBody = await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+                    responseBody = await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
 
-                        if (responseBody == null)
-                            responseFalgs |= ResponseFlags.NoBody;
-                        else
-                            messageId = _dispatcher.MessageMap.GetMessageIdByType(responseBody.GetType());
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error(ex, "Request {0} faulted.", requestHeader.RequestNo);
-
-                        responseFalgs |= ResponseFlags.Error;
-                    }
-
+                    if (responseBody == null)
+                        responseFalgs |= ResponseFlags.NoBody;
+                    else
+                        messageId = _dispatcher.MessageMap.GetMessageIdByType(responseBody.GetType());
+                }
+                catch (Exception)
+                {
+                    responseFalgs |= ResponseFlags.Error;
+                    throw;
+                }
+                finally
+                {
                     await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
                         RequestNo = requestHeader.RequestNo,
                         MessageId = messageId,
                         Flags = responseFalgs
                     }, responseBody));
                 }
-                else
+            }
+
+            async Task HandleWithoutResponse(RequestHeader requestHeader, object? requestBody)
+            {
+                await Task.Yield();
+                await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+            }
+
+            async void CompleteRequestHandlerTask(int requestNo, Task task)
+            {
+                try
                 {
-                    try
-                    {
-                        await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error(ex, "Request {0} faulted.", requestHeader.RequestNo);
-                    }
+                    await task;
+
+                    _requestHanderTasks.TryRemove(task, out var _);
+                }
+                catch(Exception ex)
+                {
+                    _logger.Error(ex, "Request {0} faulted.", requestNo);
                 }
             }
         }
