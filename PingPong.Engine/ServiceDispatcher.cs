@@ -4,14 +4,13 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading.Tasks;
 using Autofac;
-using NLog;
 
 namespace PingPong.Engine
 {
     sealed class ServiceDispatcher
     {
-        private readonly Dictionary<int, RequestHandlerBase> _messageHandlersById = 
-            new Dictionary<int, RequestHandlerBase>();
+        private readonly Dictionary<int, IRequestHanlder> _messageHandlersById = 
+            new Dictionary<int, IRequestHanlder>();
         private readonly (int RequestId, int ResponseId)[] _requestResponseMessageMap;
         private readonly MessageMap _messageMap = new MessageMap();
 
@@ -34,35 +33,41 @@ namespace PingPong.Engine
                         continue;
 
                     var newHandler = RequestHandlerBase.CreateFromMethod(serviceInstance, serviceMethod);
+
                     if (newHandler != null)
                     {
                         Type requestMessageType = newHandler.RequestMessageType;
 
-                        if (_messageMap.ContainsType(requestMessageType))
+                        int requestMessageId;
+                        if (!_messageMap.ContainsType(requestMessageType))
                         {
-                            Console.WriteLine($"Message ${requestMessageType.FullName} handled by more then one handler.");
-                            continue;
+                            requestMessageId = nextMessageId++;
+                            _messageMap.Add(requestMessageType, requestMessageId);
                         }
+                        else
+                        {
+                            requestMessageId = _messageMap.GetMessageIdByType(requestMessageType);
+                        }
+
+                        if (_messageHandlersById.TryGetValue(requestMessageId, out IRequestHanlder existingHandler))
+                            _messageHandlersById[requestMessageId] = new LinkedRequestHandler(newHandler, existingHandler);
+                        else
+                            _messageHandlersById.Add(requestMessageId, newHandler);
 
                         Type? responseMessageType = newHandler.ResponseMessageType;
 
-                        if (responseMessageType != null && _messageMap.ContainsType(responseMessageType))
-                        {
-                            Console.WriteLine($"Message ${responseMessageType.FullName} is used as response by more than one handler.");
-                            continue;
-                        }
-
-                        int requestMessageId = nextMessageId++;
-
-                        _messageMap.Add(requestMessageType, requestMessageId);
-                        _messageHandlersById.Add(requestMessageId, newHandler);
-
                         if (responseMessageType != null)
                         {
-                            int responseMessageId = nextMessageId++;
-                            _messageMap.Add(responseMessageType, responseMessageId);
-
-                            requestResponseMessageMap.Add((requestMessageId, responseMessageId));
+                            if (!_messageMap.ContainsType(responseMessageType))
+                            {
+                                int responseMessageId = nextMessageId++;
+                                _messageMap.Add(responseMessageType, responseMessageId);
+                                requestResponseMessageMap.Add((requestMessageId, responseMessageId));
+                            }
+                            else
+                            {
+                                requestResponseMessageMap.Add((requestMessageId, _messageMap.GetMessageIdByType(responseMessageType)));
+                            }
                         }
                         else
                         {
@@ -81,7 +86,12 @@ namespace PingPong.Engine
         public Task<object?> InvokeServiceMethod(int messageId, object? request) =>
             _messageHandlersById[messageId].Invoke(request);
 
-        private abstract class RequestHandlerBase
+        private interface IRequestHanlder
+        {
+            Task<object?> Invoke(object? request);
+        }
+
+        private abstract class RequestHandlerBase : IRequestHanlder
         {
             protected readonly Lazy<object> _serviceInstance;
             protected readonly MethodInfo _method;
@@ -139,6 +149,24 @@ namespace PingPong.Engine
             public abstract Type? ResponseMessageType { get; }
 
             public abstract Task<object?> Invoke(object? request);
+        }
+
+        private sealed class LinkedRequestHandler : IRequestHanlder
+        {
+            private readonly IRequestHanlder _head;
+            private readonly IRequestHanlder _tail;
+
+            public LinkedRequestHandler(IRequestHanlder head, IRequestHanlder tail)
+            {
+                _head = head;
+                _tail = tail;
+            }
+
+            public async Task<object?> Invoke(object? request)
+            {
+                await _tail.Invoke(request);
+                return await _head.Invoke(request);
+            }
         }
 
         private class AsyncOneWayRequestHandler : RequestHandlerBase

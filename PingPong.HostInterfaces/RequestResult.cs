@@ -4,6 +4,7 @@ namespace PingPong.HostInterfaces
     {
         OK,
         ServerError,
-        DeliveryTimeout
+        DeliveryTimeout,
+        PartialEventDelivery
     }
 }

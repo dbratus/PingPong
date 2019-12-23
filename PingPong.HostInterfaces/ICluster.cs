@@ -28,5 +28,10 @@ namespace PingPong.HostInterfaces
             where TRequest: class;
         Task<RequestResult> SendAsync<TRequest>(int instanceId)
             where TRequest: class;
+
+        void Publish<TEvent>(TEvent ev)
+            where TEvent: class;
+        Task<RequestResult> PublishAsync<TEvent>(TEvent ev)
+            where TEvent: class;
     }
 }

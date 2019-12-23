@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
 using PingPong.HostInterfaces;
@@ -36,6 +37,22 @@ namespace PingPong.Engine
 
         private readonly ConcurrentQueue<ClientConnection.RequestQueueEntry> _requestsOnHold =
             new ConcurrentQueue<ClientConnection.RequestQueueEntry>();
+
+        private class EventCallbackJob
+        {
+            public readonly Action<RequestResult> Callback;
+            public readonly Channel<RequestResult> ResultsChannel;
+            public int ResultsToWait;
+
+            public EventCallbackJob(Action<RequestResult> callback, Channel<RequestResult> resultsChannel, int resultsToWait)
+            {
+                Callback = callback;
+                ResultsChannel = resultsChannel;
+                ResultsToWait = resultsToWait;
+            }
+        }
+        private readonly ConcurrentQueue<EventCallbackJob> _eventCallbackJobs =
+            new ConcurrentQueue<EventCallbackJob>();
 
         public ClusterConnection(string[] uris) :
             this(uris, new ClusterConnectionSettings())
@@ -503,6 +520,56 @@ namespace PingPong.Engine
             return completionSource.Task;
         }
 
+        public void Publish<TEvent>(TEvent ev)
+            where TEvent: class 
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TEvent), out ConnectionSelector selector))
+                return;
+
+            foreach (ClientConnection? conn in selector.AllConnections(_connections))
+                conn?.Send(false, ev);
+        }
+
+        public void Publish<TEvent>(TEvent ev, Action<RequestResult> callback)
+            where TEvent: class 
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TEvent), out ConnectionSelector selector))
+                return;
+
+            var resultsChannel = Channel.CreateUnbounded<RequestResult>(new UnboundedChannelOptions {
+                SingleReader = true
+            });
+
+            int totalConfirmationsToWait = 0;
+            foreach (ClientConnection? conn in selector.AllConnections(_connections))
+            {
+                conn?.Send(false, ev, result => resultsChannel.Writer.TryWrite(result));
+                ++totalConfirmationsToWait;
+            }
+
+            if (totalConfirmationsToWait == 0)
+                return;
+
+            _eventCallbackJobs.Enqueue(new EventCallbackJob(callback, resultsChannel, totalConfirmationsToWait));
+        }
+
+        public Task<RequestResult> PublishAsync<TEvent>(TEvent ev)
+            where TEvent: class
+        {
+            var completionSource = new TaskCompletionSource<RequestResult>();
+            
+            Publish<TEvent>(
+                ev,
+                result => completionSource.SetResult(result)
+            );
+
+            return completionSource.Task;
+        }
+
         private void ValidateSend()
         {
             ClusterConnectionStatus status = _status;
@@ -557,6 +624,48 @@ namespace PingPong.Engine
                     }
 
                     connection.Dispose();
+                }
+            }
+
+            // Completing event callback jobs.
+            int completedCount = 0;
+            int totalCount = _eventCallbackJobs.Count;
+
+            foreach (EventCallbackJob job in _eventCallbackJobs)
+            {
+                if (job.ResultsToWait == 0)
+                {
+                    ++completedCount;
+                    continue;
+                }
+
+                while (job.ResultsChannel.Reader.TryRead(out RequestResult nextResult))
+                {
+                    if (nextResult != RequestResult.OK)
+                    {
+                        job.ResultsToWait = 0;
+                        ++completedCount;
+                        job.Callback(RequestResult.PartialEventDelivery);
+                        break;
+                    }
+
+                    --job.ResultsToWait;
+
+                    if (job.ResultsToWait == 0)
+                    {
+                        job.Callback(RequestResult.OK);
+                        ++completedCount;
+                    }
+                }
+            }
+
+            // Cleanup event callback jobs queue if at least half of the jobs are complete.
+            if (totalCount - completedCount < totalCount / 2)
+            {
+                while (completedCount-- > 0)
+                {
+                    if (_eventCallbackJobs.TryDequeue(out EventCallbackJob job) && job.ResultsToWait > 0)
+                        _eventCallbackJobs.Enqueue(job);
                 }
             }
 
@@ -684,6 +793,12 @@ namespace PingPong.Engine
 
             public ClientConnection? GetConnectionByInstanceId(ClientConnection?[] connections, int instanceId) =>
                 _instanceMap.TryGetValue(instanceId, out int connIdx) ? connections[connIdx] : null;
+
+            public IEnumerable<ClientConnection?> AllConnections(ClientConnection?[] connections)
+            {
+                foreach (int idx in _connectionsIdx)
+                    yield return connections[idx];
+            }
         }
     }
 }
