@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading.Tasks;
 using Autofac;
@@ -35,7 +36,7 @@ namespace PingPong.Engine
                     var newHandler = RequestHandlerBase.CreateFromMethod(serviceInstance, serviceMethod);
                     if (newHandler != null)
                     {
-                        Type requestMessageType = newHandler.GetRequestMessageType();
+                        Type requestMessageType = newHandler.RequestMessageType;
 
                         if (_messageMap.ContainsType(requestMessageType))
                         {
@@ -43,7 +44,7 @@ namespace PingPong.Engine
                             continue;
                         }
 
-                        Type? responseMessageType = newHandler.GetResponseMessageType();
+                        Type? responseMessageType = newHandler.ResponseMessageType;
 
                         if (responseMessageType != null && _messageMap.ContainsType(responseMessageType))
                         {
@@ -91,6 +92,26 @@ namespace PingPong.Engine
                 _method = method;
             }
 
+            protected static TLambda CreateServiceMethodInvoker<TLambda>(MethodInfo method)
+            {
+                Type requestType = method.GetParameters()[0].ParameterType;
+
+                var instanceParam = Expression.Parameter(typeof(object));
+                var requestParam = Expression.Parameter(typeof(object));
+                var lambdaBody = Expression.Call(
+                    Expression.Convert(instanceParam, method.DeclaringType),
+                    method,
+                    new [] { Expression.Convert(requestParam, requestType) }
+                );
+                var lambda = Expression.Lambda<TLambda>(
+                    lambdaBody, 
+                    false, 
+                    new [] { instanceParam, requestParam }
+                );
+
+                return lambda.Compile();
+            }
+
             public static RequestHandlerBase? CreateFromMethod(Lazy<object> serviceInstance, MethodInfo method)
             {
                 ParameterInfo[] methodParams = method.GetParameters();
@@ -104,69 +125,44 @@ namespace PingPong.Engine
                     return new AsyncOneWayRequestHandler(serviceInstance, method);
                 else if (method.ReturnType.IsSubclassOf(typeof(Task)))
                     return new AsyncRequestHandler(serviceInstance, method);
-                else if (method.ReturnType.IsClass || method.ReturnType == typeof(void))
+                else if (method.ReturnType == typeof(void))
+                    return new SyncOneWayRequestHandler(serviceInstance, method);
+                else if (method.ReturnType.IsClass)
                     return new SyncRequestHandler(serviceInstance, method);
 
                 return null;
             }
 
-            public Type GetRequestMessageType() =>
+            public Type RequestMessageType =>
                 _method.GetParameters()[0].ParameterType;
 
-            public abstract Type? GetResponseMessageType();
+            public abstract Type? ResponseMessageType { get; }
 
             public abstract Task<object?> Invoke(object? request);
         }
 
-        private sealed class AsyncRequestHandler : RequestHandlerBase
+        private class AsyncOneWayRequestHandler : RequestHandlerBase
         {
-            public AsyncRequestHandler(Lazy<object> serviceInstance, MethodInfo method) : base(serviceInstance, method)
+            protected readonly Func<object, object?, Task> _serviceMethod;
+
+            public AsyncOneWayRequestHandler(Lazy<object> serviceInstance, MethodInfo method) 
+                : base(serviceInstance, method)
             {
+                _serviceMethod = CreateServiceMethodInvoker<Func<object, object?, Task>>(method);
             }
 
-            public override Type GetResponseMessageType() =>
-                _method.ReturnType.GetGenericArguments()[0];
-
-            public override Task<object?> Invoke(object? request)
-            {
-                var taskCompletion = new TaskCompletionSource<object?>();
-                
-                ((Task)_method.Invoke(_serviceInstance.Value, new object?[] { request }))
-                    .ContinueWith((Task t) => {
-                        if (t.IsFaulted)
-                        {
-                            taskCompletion.SetException(t.Exception);
-                            return;
-                        }
-
-                        dynamic taskWithResult = t;
-                        object result = taskWithResult.Result;
-                        
-                        taskCompletion.SetResult(result);
-                    });
-
-                return taskCompletion.Task;
-            }
-        }
-
-        private sealed class AsyncOneWayRequestHandler : RequestHandlerBase
-        {
-            public AsyncOneWayRequestHandler(Lazy<object> serviceInstance, MethodInfo method) : base(serviceInstance, method)
-            {
-            }
-
-            public override Type? GetResponseMessageType() =>
+            public override Type? ResponseMessageType =>
                 null;
 
             public override Task<object?> Invoke(object? request)
             {
                 var taskCompletion = new TaskCompletionSource<object?>();
 
-                ((Task)_method.Invoke(_serviceInstance.Value, new object?[] { request }))
-                    .ContinueWith(t => {
-                        if (t.IsFaulted)
+                _serviceMethod(_serviceInstance.Value, request)
+                    .ContinueWith(task => {
+                        if (task.IsFaulted)
                         {
-                            taskCompletion.SetException(t.Exception);
+                            taskCompletion.SetException(task.Exception);
                             return;
                         }
 
@@ -177,17 +173,93 @@ namespace PingPong.Engine
             }
         }
 
-        private sealed class SyncRequestHandler : RequestHandlerBase
+        private sealed class AsyncRequestHandler : AsyncOneWayRequestHandler
         {
-            public SyncRequestHandler(Lazy<object> serviceInstance, MethodInfo method) : base(serviceInstance, method)
+            private readonly Type _responseMessageType;
+            private readonly Func<Task, object?> _getTaskResult;
+
+            public AsyncRequestHandler(Lazy<object> serviceInstance, MethodInfo method) 
+                : base(serviceInstance, method)
             {
+                _responseMessageType = _method.ReturnType.GetGenericArguments()[0];
+                _getTaskResult = CreateTaskResultGetter(_responseMessageType, _method.ReturnType);
             }
 
-            public override Type? GetResponseMessageType() =>
+            private static Func<Task, object?> CreateTaskResultGetter(Type responseMessageType, Type taskType)
+            {
+                MethodInfo resultGetter = taskType.GetProperty("Result").GetGetMethod();
+
+                var taskParam = Expression.Parameter(typeof(Task));
+                var lambdaBody = Expression.Property(
+                    Expression.Convert(taskParam, taskType),
+                    resultGetter
+                );
+                var lambda = Expression.Lambda<Func<Task, object?>>(
+                    lambdaBody,
+                    false,
+                    new [] { taskParam }
+                );
+
+                return lambda.Compile();
+            }
+
+            public override Type ResponseMessageType =>
+                _responseMessageType;
+
+            public override Task<object?> Invoke(object? request)
+            {
+                var taskCompletion = new TaskCompletionSource<object?>();
+                
+                _serviceMethod(_serviceInstance.Value, request)
+                    .ContinueWith(task => {
+                        if (task.IsFaulted)
+                        {
+                            taskCompletion.SetException(task.Exception);
+                            return;
+                        }
+
+                        taskCompletion.SetResult(_getTaskResult(task));
+                    });
+
+                return taskCompletion.Task;
+            }
+        }
+
+        private sealed class SyncRequestHandler : RequestHandlerBase
+        {
+            private readonly Func<object, object?, object?> _serviceMethod;
+
+            public SyncRequestHandler(Lazy<object> serviceInstance, MethodInfo method) 
+                : base(serviceInstance, method)
+            {
+                _serviceMethod = CreateServiceMethodInvoker<Func<object, object?, object?>>(method);
+            }
+
+            public override Type? ResponseMessageType =>
                 _method.ReturnType.IsClass ? _method.ReturnType : null;
 
             public override Task<object?> Invoke(object? request) =>
-                Task.FromResult<object?>(_method.Invoke(_serviceInstance.Value, new object?[] { request }));
+                Task.FromResult<object?>(_serviceMethod(_serviceInstance.Value, request));
+        }
+
+        private sealed class SyncOneWayRequestHandler : RequestHandlerBase
+        {
+            private readonly Action<object, object?> _serviceMethod;
+
+            public SyncOneWayRequestHandler(Lazy<object> serviceInstance, MethodInfo method) 
+                : base(serviceInstance, method)
+            {
+                _serviceMethod = CreateServiceMethodInvoker<Action<object, object?>>(method);
+            }
+
+            public override Type? ResponseMessageType =>
+                _method.ReturnType.IsClass ? _method.ReturnType : null;
+
+            public override Task<object?> Invoke(object? request)
+            {
+                _serviceMethod(_serviceInstance.Value, request);
+                return Task.FromResult<object?>(null);
+            }
         }
     }
 }
