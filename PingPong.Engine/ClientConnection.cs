@@ -95,6 +95,34 @@ namespace PingPong.Engine
         public int InstanceId =>
             _instanceId;
 
+        public sealed class HostStatusData
+        {
+            private volatile int _pendingProcessing;
+            private volatile int _inProcessing;
+            private volatile int _pendingResponsePropagation;
+
+            public int PendingProcessing 
+            { 
+                get => _pendingProcessing;
+                set => _pendingProcessing = value;
+            }
+
+            public int InProcessing
+            { 
+                get => _inProcessing;
+                set => _inProcessing = value;
+            }
+
+            public int PendingResponsePropagation
+            { 
+                get => _pendingResponsePropagation;
+                set => _pendingResponsePropagation = value;
+            }
+        }
+        private readonly HostStatusData _hostStatus = new HostStatusData();
+        public HostStatusData HostStatus =>
+            _hostStatus;
+
         public ClientConnection(string uri) :
             this(new RequestNoGenerator(), uri)
         {
@@ -433,6 +461,15 @@ namespace PingPong.Engine
                     {
                         Type responseType = _messageMap.GetMessageTypeById(responseHeader.MessageId);
                         responseBody = await _messageReader.Value.Read(responseType);
+                    }
+
+                    if ((responseHeader.Flags & ResponseFlags.HostStatus) == ResponseFlags.HostStatus)
+                    {
+                        var hostStatusMessage = await _messageReader.Value.Read<HostStatusMessage>();
+
+                        _hostStatus.PendingProcessing = hostStatusMessage.PendingProcessing;
+                        _hostStatus.InProcessing = hostStatusMessage.InProcessing;
+                        _hostStatus.PendingResponsePropagation = hostStatusMessage.PendingResponsePropagation;
                     }
 
                     await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));

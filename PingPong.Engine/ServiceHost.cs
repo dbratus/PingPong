@@ -38,9 +38,11 @@ namespace PingPong.Engine
             try
             {
                 var session = new Session();
+                
                 using ClusterConnection clusterConnection = CreateClusterConnection();
                 using IContainer container = BuildContainer();
                 
+                var counters = new ServiceHostCounters();
                 var dispatcher = new ServiceDispatcher(container, _serviceTypes);
 
                 _listeningSocket = new Socket(SocketType.Stream, ProtocolType.IP);
@@ -53,7 +55,7 @@ namespace PingPong.Engine
 
                 _logger.Info("Server started. Listening port {0}...", config.Port);
 
-                bool invokeCallbacks = true;
+                bool updateClusterConnection = true;
 
                 Task clusterConnectionTask = ConnectCluster();
                 Task callbacksInvocationTask = UpdateClusterConnection();
@@ -73,10 +75,10 @@ namespace PingPong.Engine
 
                     _logger.Info("Client connected {0}.", ((IPEndPoint)connectionSocket.RemoteEndPoint).Address);
 
-                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config));
+                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config, counters));
                 }
 
-                Volatile.Write(ref invokeCallbacks, false);
+                Volatile.Write(ref updateClusterConnection, false);
 
                 await clusterConnectionTask;
                 await callbacksInvocationTask;
@@ -143,7 +145,7 @@ namespace PingPong.Engine
                 {
                     try
                     {
-                        while (Volatile.Read(ref invokeCallbacks))
+                        while (Volatile.Read(ref updateClusterConnection))
                         {
                             clusterConnection.Update();
 

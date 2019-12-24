@@ -705,6 +705,10 @@ namespace PingPong.Engine
                     _requestsOnHold.Enqueue(request);
             }
 
+            // Updating connection selectors.
+            foreach (ConnectionSelector selector in _routingMap.Values)
+                selector.UpdateWeights(_connections);
+
             void ReconnectionComplete(Task connectionTask, ClientConnection connection, int connSlotIdx)
             {
                 if (connectionTask.IsFaulted)
@@ -725,6 +729,7 @@ namespace PingPong.Engine
         {
             private readonly List<int> _connectionsIdx = new List<int>();
             private readonly Dictionary<int, int> _instanceMap = new Dictionary<int, int>();
+            private readonly Dictionary<int, double> _weights = new Dictionary<int, double>();
 
             private readonly Random _random = new Random();
 
@@ -774,21 +779,31 @@ namespace PingPong.Engine
                     return Volatile.Read(ref connections[active[0]]);
 
                 if (activeCount > 1)
-                    return Volatile.Read(ref connections[active[_random.Next(activeCount)]]);
+                    return Volatile.Read(ref connections[SelectRandomIndex(active)]);
 
                 if (connectingCount == 1)
                     return Volatile.Read(ref connections[connecting[0]]);
 
                 if (connectingCount > 1)
-                    return Volatile.Read(ref connections[connecting[_random.Next(connectingCount)]]);
+                    return Volatile.Read(ref connections[SelectRandomIndex(connecting)]);
 
                 if (brokenCount == 1)
                     return Volatile.Read(ref connections[broken[0]]);
 
                 if (brokenCount > 1)
-                    return Volatile.Read(ref connections[broken[_random.Next(brokenCount)]]);
+                    return Volatile.Read(ref connections[SelectRandomIndex(broken)]);
 
                 throw new CommunicationException("No connection available");
+            }
+
+            private int SelectRandomIndex(Span<int> connIdx)
+            {
+                Span<double> weights = stackalloc double[connIdx.Length];
+
+                for (int i = 0; i < connIdx.Length; ++i)
+                    weights[i] = _weights.TryGetValue(connIdx[i], out double val) ? val : 1.0;
+
+                return connIdx[WeightedRandom.GetIndex(_random, weights)];
             }
 
             public ClientConnection? GetConnectionByInstanceId(ClientConnection?[] connections, int instanceId) =>
@@ -798,6 +813,24 @@ namespace PingPong.Engine
             {
                 foreach (int idx in _connectionsIdx)
                     yield return connections[idx];
+            }
+
+            public void UpdateWeights(ClientConnection?[] connections)
+            {
+                foreach (int connIdx in _connectionsIdx)
+                {
+                    ClientConnection? conn = connections[connIdx];
+                    if (conn == null)
+                        continue;
+
+                    int totalLoad = 
+                        conn.HostStatus.PendingProcessing + 
+                        conn.HostStatus.InProcessing + 
+                        conn.HostStatus.PendingResponsePropagation;
+                    double weight = totalLoad > 0 ? 1.0 / totalLoad : 1.0;
+
+                    _weights[connIdx] = weight;
+                }
             }
         }
     }

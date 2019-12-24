@@ -3,6 +3,7 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Net.Sockets;
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
@@ -18,6 +19,7 @@ namespace PingPong.Engine
         private readonly ServiceHostConfig _config;
         private readonly DelimitedMessageReader _messageReader;
         private readonly DelimitedMessageWriter _messageWriter;
+        private readonly ServiceHostCounters _counters;
 
         private readonly ConcurrentDictionary<Task, object?> _requestHanderTasks =
             new ConcurrentDictionary<Task, object?>();
@@ -40,17 +42,23 @@ namespace PingPong.Engine
             });
         private readonly Task _responsePropagatorTask;
 
+        private readonly Task _hostStatusSenderTask;
+        private readonly CancellationTokenSource _hostStatusSenderCancellation = 
+            new CancellationTokenSource();
+
         public Socket Socket =>
             _socket;
 
-        public ServerConnection(Socket socket, ServiceDispatcher dispatcher, ServiceHostConfig config)
+        public ServerConnection(Socket socket, ServiceDispatcher dispatcher, ServiceHostConfig config, ServiceHostCounters counters)
         {
             _dispatcher = dispatcher;
             _socket = socket;
             _config = config;
             _messageReader = new DelimitedMessageReader(new NetworkStream(socket, System.IO.FileAccess.Read, false));
             _messageWriter = new DelimitedMessageWriter(new NetworkStream(socket, System.IO.FileAccess.Write, false));
-            _responsePropagatorTask = PropagateRequests();
+            _responsePropagatorTask = PropagateResponses();
+            _hostStatusSenderTask = SendHostStatus();
+            _counters = counters;
         }
 
         public void Dispose()
@@ -59,6 +67,9 @@ namespace PingPong.Engine
                 requestHandlerTask.Wait();
             
             _requestHanderTasks.Clear();
+
+            _hostStatusSenderCancellation.Cancel();
+            _hostStatusSenderTask.Wait();
 
             _responseChan.Writer.Complete();
             _responsePropagatorTask.Wait();
@@ -109,6 +120,8 @@ namespace PingPong.Engine
                     requestBody = await _messageReader.Read(requestType);
                 }
 
+                _counters.PendingProcessing.Increment();
+
                 Task requestHandlerTask;
                 if ((requestHeader.Flags & RequestFlags.NoResponse) == RequestFlags.None)
                     requestHandlerTask = HandleWithResponse(requestHeader, requestBody);
@@ -126,6 +139,9 @@ namespace PingPong.Engine
             async Task HandleWithResponse(RequestHeader requestHeader, object? requestBody)
             {
                 await Task.Yield();
+
+                _counters.PendingProcessing.Decrement();
+                _counters.InProcessing.Increment();
 
                 object? responseBody = null;
                 int messageId = -1;
@@ -147,6 +163,8 @@ namespace PingPong.Engine
                 }
                 finally
                 {
+                    _counters.PendingResponsePropagation.Increment();
+
                     await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
                         RequestNo = requestHeader.RequestNo,
                         MessageId = messageId,
@@ -158,6 +176,10 @@ namespace PingPong.Engine
             async Task HandleWithoutResponse(RequestHeader requestHeader, object? requestBody)
             {
                 await Task.Yield();
+                
+                _counters.PendingProcessing.Decrement();
+                _counters.InProcessing.Increment();
+
                 await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
             }
 
@@ -168,6 +190,8 @@ namespace PingPong.Engine
                     await task;
 
                     _requestHanderTasks.TryRemove(task, out var _);
+
+                    _counters.InProcessing.Decrement();
                 }
                 catch(Exception ex)
                 {
@@ -176,9 +200,8 @@ namespace PingPong.Engine
             }
         }
 
-        private async Task PropagateRequests()
+        private async Task PropagateResponses()
         {
-            // Yield to get rid of the sync section.
             await Task.Yield();
 
             try
@@ -200,6 +223,17 @@ namespace PingPong.Engine
                     
                     if (nextResponse.Body != null)
                         await _messageWriter.Write(nextResponse.Body);
+
+                    if ((nextResponse.Header.Flags & ResponseFlags.HostStatus) == ResponseFlags.HostStatus)
+                    {
+                        await _messageWriter.Write(new HostStatusMessage {
+                            PendingProcessing = _counters.PendingProcessing.Count,
+                            InProcessing = _counters.InProcessing.Count,
+                            PendingResponsePropagation = _counters.PendingResponsePropagation.Count
+                        });
+                    }
+
+                    _counters.PendingResponsePropagation.Decrement();
                 }
 
                 await _messageWriter.Write(new ResponseHeader{
@@ -209,6 +243,27 @@ namespace PingPong.Engine
             catch (Exception ex)
             {
                 _logger.Error(ex, "Response propagator faulted");
+            }
+        }
+
+        private async Task SendHostStatus()
+        {
+            await Task.Yield();
+
+            while (true)
+            {
+                try 
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(_config.StatusMessageInterval), _hostStatusSenderCancellation.Token);
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+
+                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                    Flags = ResponseFlags.HostStatus | ResponseFlags.NoBody
+                }, null));
             }
         }
     }

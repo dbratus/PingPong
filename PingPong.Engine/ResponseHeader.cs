@@ -4,7 +4,7 @@ using MessagePack;
 namespace PingPong.Engine
 {
     [MessagePackObject]
-    public class ResponseHeader
+    public sealed class ResponseHeader
     {
         [Key(0)]
         public int RequestNo { get; set; }
@@ -22,6 +22,7 @@ namespace PingPong.Engine
         None = 0,
         Error = 1,
         NoBody = 1 << 1,
-        Termination = 1 << 2
+        Termination = 1 << 2,
+        HostStatus = 1 << 3
     }
 }

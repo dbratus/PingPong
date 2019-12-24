@@ -9,6 +9,8 @@ namespace PingPong.Engine
 
         public int InstanceId { get; set; }
 
+        public int StatusMessageInterval { get; set; } = 5;
+
         public ClusterConnectionSettingsSection ClusterConnectionSettings { get; set; } =
             new ClusterConnectionSettingsSection();
 
