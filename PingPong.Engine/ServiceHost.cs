@@ -36,14 +36,14 @@ namespace PingPong.Engine
             ConfigureLogger(config);
             LoadServiceAssemblies(config.ServiceAssemblies);
 
-            await Task.Yield();
-
             var serviceHostStopped = new ManualResetEvent(false);
+
+            InitSignalHandlers();
+
+            await Task.Yield();
 
             try
             {
-                InitSignalHandlers();
-
                 var session = new Session();
                 
                 using ClusterConnection clusterConnection = CreateClusterConnection();
@@ -224,21 +224,6 @@ namespace PingPong.Engine
                         return true;
                     }
                 }
-
-                void InitSignalHandlers()
-                {
-                    // Handling SIGINT
-                    Console.CancelKeyPress += (sender, args) => {
-                        Stop();
-                        args.Cancel = true;
-                    };
-
-                    // Handling SIGTERM
-                    AssemblyLoadContext.Default.Unloading += delegate {
-                        Stop();
-                        serviceHostStopped.WaitOne();
-                    };
-                }
             }
             finally
             {
@@ -250,6 +235,21 @@ namespace PingPong.Engine
                 LogManager.Flush();
 
                 serviceHostStopped.Set();
+            }
+
+            void InitSignalHandlers()
+            {
+                // Handling SIGINT
+                Console.CancelKeyPress += (sender, args) => {
+                    Stop();
+                    args.Cancel = true;
+                };
+
+                // Handling SIGTERM
+                AssemblyLoadContext.Default.Unloading += delegate {
+                    Stop();
+                    serviceHostStopped.WaitOne();
+                };
             }
         }
 
