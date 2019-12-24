@@ -4,6 +4,7 @@ using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Runtime.Loader;
 using System.Threading;
 using System.Threading.Tasks;
 using Autofac;
@@ -37,8 +38,12 @@ namespace PingPong.Engine
 
             LogManager.Configuration.Variables["instanceId"] = config.InstanceId.ToString();
 
+            var serviceHostStopped = new ManualResetEvent(false);
+
             try
             {
+                InitSignalHandlers();
+
                 var session = new Session();
                 
                 using ClusterConnection clusterConnection = CreateClusterConnection();
@@ -124,10 +129,12 @@ namespace PingPong.Engine
                     }
                 }
 
-                ClusterConnection CreateClusterConnection() =>
-                    new ClusterConnection(config.KnownHosts, new ClusterConnectionSettings {
+                ClusterConnection CreateClusterConnection()
+                {
+                    return new ClusterConnection(config.KnownHosts, new ClusterConnectionSettings {
                         ReconnectionDelay = TimeSpan.FromSeconds(config.ClusterConnectionSettings.ReconnectionDelay)
                     });
+                }
 
                 async Task ConnectCluster()
                 {
@@ -217,6 +224,21 @@ namespace PingPong.Engine
                         return true;
                     }
                 }
+
+                void InitSignalHandlers()
+                {
+                    // Handling SIGINT
+                    Console.CancelKeyPress += (sender, args) => {
+                        Stop();
+                        args.Cancel = true;
+                    };
+
+                    // Handling SIGTERM
+                    AssemblyLoadContext.Default.Unloading += delegate {
+                        Stop();
+                        serviceHostStopped.WaitOne();
+                    };
+                }
             }
             finally
             {
@@ -226,6 +248,8 @@ namespace PingPong.Engine
                 _logger.Info("Service host stopped.");
                 
                 LogManager.Flush();
+
+                serviceHostStopped.Set();
             }
         }
 

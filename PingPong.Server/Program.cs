@@ -28,21 +28,7 @@ namespace PingPong.Server
 
             InitLogging();
 
-            var serviceHost = new ServiceHost();
-            var serviceHostStopped = new ManualResetEvent(false);
-
-            InitSignalHandlers();
-
-            try
-            {
-                await serviceHost
-                    .Start(config);
-            }
-            finally
-            {
-                serviceHostStopped.Set();
-            }
-
+            await new ServiceHost().Start(config);
             return 0;
 
             async Task<ServiceHostConfig> LoadConfig()
@@ -69,21 +55,6 @@ namespace PingPong.Server
                 config.AddRule(LogLevel.Error, LogLevel.Fatal, consoleErrorTarget);
 
                 LogManager.Configuration = config;
-            }
-
-            void InitSignalHandlers()
-            {
-                // Handling SIGINT
-                Console.CancelKeyPress += (_, args) => {
-                    serviceHost.Stop();
-                    args.Cancel = true;
-                };
-
-                // Handling SIGTERM
-                AssemblyLoadContext.Default.Unloading += delegate {
-                    serviceHost.Stop();
-                    serviceHostStopped.WaitOne();
-                };
             }
         }
     }
