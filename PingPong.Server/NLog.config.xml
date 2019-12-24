@@ -1,0 +1,14 @@
+<nlog throwExceptions="true">
+    <targets>
+        <target type="Console" 
+                name="consoleError"
+                layout="${longdate}|${level:uppercase=true}|${var:instanceId}|${logger}|${message} ${exception:format=tostring}" />
+        <target type="Console" 
+                name="consoleInfo"
+                layout="${longdate}|${level:uppercase=true}|${var:instanceId}|${logger}|${message}" />
+    </targets>
+    <rules>
+        <logger name="*" minLevel="Error" writeTo="consoleError" />
+        <logger name="*" minLevel="Trace" writeTo="consoleInfo" />
+    </rules>
+</nlog>

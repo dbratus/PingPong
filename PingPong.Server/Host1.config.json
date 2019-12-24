@@ -2,6 +2,8 @@
     "Port": 10000,
     "InstanceId": 0,
 
+    "NLogConfigFile": "NLog.config.xml",
+
     "ServiceAssemblies": [
         "../PingPong.Services/bin/Debug/netstandard2.1/PingPong.Services.dll"
     ],

@@ -12,6 +12,8 @@ namespace PingPong.Engine
         public string[] ServiceAssemblies { get; set; } = 
             new string[0];
 
+        public string NLogConfigFile { get; set; } = "";
+
         public int StatusMessageInterval { get; set; } = 5;
 
         public ClusterConnectionSettingsSection ClusterConnectionSettings { get; set; } =

@@ -26,8 +26,6 @@ namespace PingPong.Server
                 return 1;
             };
 
-            InitLogging();
-
             await new ServiceHost().Start(config);
             return 0;
 
@@ -39,22 +37,6 @@ namespace PingPong.Server
                 using FileStream configFile = File.OpenRead(args[0]);
 
                 return await JsonSerializer.DeserializeAsync<ServiceHostConfig>(configFile);
-            }
-
-            void InitLogging()
-            {
-                var config = new LoggingConfiguration();
-
-                var consoleErrorTarget = new ConsoleTarget("consoleInfo");
-                consoleErrorTarget.Layout = "${longdate}|${level:uppercase=true}|${var:instanceId}|${logger}|${message} ${exception:format=tostring}";
-
-                var consoleInfoTarget = new ConsoleTarget("consoleInfo");
-                consoleInfoTarget.Layout = "${longdate}|${level:uppercase=true}|${var:instanceId}|${logger}|${message}";
-
-                config.AddRule(LogLevel.Trace, LogLevel.Info, consoleInfoTarget);
-                config.AddRule(LogLevel.Error, LogLevel.Fatal, consoleErrorTarget);
-
-                LogManager.Configuration = config;
             }
         }
     }

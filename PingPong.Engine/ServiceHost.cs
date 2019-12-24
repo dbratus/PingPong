@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Autofac;
 using NLog;
+using NLog.Config;
 using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
@@ -32,11 +33,10 @@ namespace PingPong.Engine
             if (_listeningSocket != null)
                 throw new InvalidOperationException("Service host is already started.");
 
+            ConfigureLogger(config);
             LoadServiceAssemblies(config.ServiceAssemblies);
 
             await Task.Yield();
-
-            LogManager.Configuration.Variables["instanceId"] = config.InstanceId.ToString();
 
             var serviceHostStopped = new ManualResetEvent(false);
 
@@ -261,6 +261,12 @@ namespace PingPong.Engine
                 return;
 
             socket.Close();
+        }
+
+        private void ConfigureLogger(ServiceHostConfig config)
+        {
+            LogManager.Configuration = new XmlLoggingConfiguration(config.NLogConfigFile);
+            LogManager.Configuration.Variables["instanceId"] = config.InstanceId.ToString();
         }
 
         private void LoadServiceAssemblies(string[] assemblies)
