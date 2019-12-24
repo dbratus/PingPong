@@ -36,13 +36,10 @@ namespace PingPong.Server
             try
             {
                 await serviceHost
-                    .AddServiceAssembly(typeof(PingPong.Services.ContainerPivot).Assembly)
                     .Start(config);
             }
             finally
             {
-                LogManager.Flush();
-
                 serviceHostStopped.Set();
             }
 

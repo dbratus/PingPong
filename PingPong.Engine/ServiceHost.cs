@@ -31,6 +31,8 @@ namespace PingPong.Engine
             if (_listeningSocket != null)
                 throw new InvalidOperationException("Service host is already started.");
 
+            LoadServiceAssemblies(config.ServiceAssemblies);
+
             await Task.Yield();
 
             LogManager.Configuration.Variables["instanceId"] = config.InstanceId.ToString();
@@ -220,9 +222,11 @@ namespace PingPong.Engine
             {
                 _listeningSocket?.Dispose();
                 _listeningSocket = null;
-            }
 
-            _logger.Info("Service host stopped.");
+                _logger.Info("Service host stopped.");
+                
+                LogManager.Flush();
+            }
         }
 
         public void Stop()
@@ -233,6 +237,12 @@ namespace PingPong.Engine
                 return;
 
             socket.Close();
+        }
+
+        private void LoadServiceAssemblies(string[] assemblies)
+        {
+            foreach (string assemblyPath in assemblies)
+                AddServiceAssembly(Assembly.LoadFrom(assemblyPath));
         }
 
         private sealed class ContainerBuilderWrapper : IContainerBuilder

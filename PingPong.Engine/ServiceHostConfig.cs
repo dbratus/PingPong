@@ -9,16 +9,19 @@ namespace PingPong.Engine
 
         public int InstanceId { get; set; }
 
+        public string[] ServiceAssemblies { get; set; } = 
+            new string[0];
+
         public int StatusMessageInterval { get; set; } = 5;
 
         public ClusterConnectionSettingsSection ClusterConnectionSettings { get; set; } =
             new ClusterConnectionSettingsSection();
 
-        public string[] KnownHosts { get; set; } 
-            = new string[0];
+        public string[] KnownHosts { get; set; } = 
+            new string[0];
 
-        public Dictionary<string, JsonElement> ServiceConfigs { get; set; } 
-            = new Dictionary<string, JsonElement>();
+        public Dictionary<string, JsonElement> ServiceConfigs { get; set; } = 
+            new Dictionary<string, JsonElement>();
 
         public class ClusterConnectionSettingsSection
         {

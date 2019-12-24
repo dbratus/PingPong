@@ -2,6 +2,10 @@
     "Port": 10000,
     "InstanceId": 0,
 
+    "ServiceAssemblies": [
+        "../PingPong.Services/bin/Debug/netstandard2.1/PingPong.Services.dll"
+    ],
+
     "KnownHosts": [
         "tcp://localhost:10000",
         "tcp://localhost:10001"

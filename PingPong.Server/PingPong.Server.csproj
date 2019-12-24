@@ -2,7 +2,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\PingPong.Engine\PingPong.Engine.csproj" />
-    <ProjectReference Include="..\PingPong.Services\PingPong.Services.csproj" />
   </ItemGroup>
 
   <ItemGroup>
