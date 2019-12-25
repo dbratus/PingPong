@@ -414,17 +414,27 @@ namespace PingPong.Engine
                     else
                         flags |= RequestFlags.NoResponse;
 
-                    await _messageWriter.Value.Write(new RequestHeader {
-                        RequestNo = requestNo,
-                        MessageId = messageId,
-                        Flags = flags
-                    });
+                    try
+                    {
+                        await _messageWriter.Value.Write(new RequestHeader {
+                            RequestNo = requestNo,
+                            MessageId = messageId,
+                            Flags = flags
+                        });
 
-                    if (nextRequest.Body != null)
-                        await _messageWriter.Value.Write(nextRequest.Body);
-                    
-                    if (nextRequest.Callback == null)
-                        Interlocked.Decrement(ref _pendingRequestsCount);
+                        if (nextRequest.Body != null)
+                            await _messageWriter.Value.Write(nextRequest.Body);
+                        
+                        if (nextRequest.Callback == null)
+                            Interlocked.Decrement(ref _pendingRequestsCount);
+                    }
+                    catch
+                    {
+                        // Returning the request to the channel to prevent its loss in case of 
+                        // network failures.
+                        _requestChan.Writer.TryWrite(nextRequest);
+                        throw;
+                    }
                 }
 
                 await _messageWriter.Value.Write(new RequestHeader{});
