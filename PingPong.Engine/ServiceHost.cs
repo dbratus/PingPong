@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Runtime.Loader;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Tasks;
 using Autofac;
@@ -21,6 +23,8 @@ namespace PingPong.Engine
         private readonly List<Type> _serviceTypes = new List<Type>();
 
         private Socket? _listeningSocket;
+        private volatile bool _updateClusterConnection = true;
+        private readonly ManualResetEvent _serviceHostStopped = new ManualResetEvent(false);
 
         public ServiceHost AddServiceAssembly(Assembly assembly)
         {
@@ -33,39 +37,33 @@ namespace PingPong.Engine
             if (_listeningSocket != null)
                 throw new InvalidOperationException("Service host is already started.");
 
-            ConfigureLogger(config);
-            LoadServiceAssemblies(config.ServiceAssemblies);
-
-            var serviceHostStopped = new ManualResetEvent(false);
-
-            InitSignalHandlers();
-
-            await Task.Yield();
-
             try
             {
+                ConfigureLogger(config);
+                LoadServiceAssemblies(config.ServiceAssemblies);
+                InitSignalHandlers();
+
+                X509Certificate? certificate = await LoadCertificate(config);
                 var session = new Session();
-                
-                using ClusterConnection clusterConnection = CreateClusterConnection();
-                using IContainer container = BuildContainer();
-                
                 var counters = new ServiceHostCounters();
+
+                using ClusterConnection clusterConnection = CreateClusterConnection(config);
+                using IContainer container = BuildContainer(config, clusterConnection, session);
+                
                 var dispatcher = new ServiceDispatcher(container, _serviceTypes);
 
                 _listeningSocket = new Socket(SocketType.Stream, ProtocolType.IP);
                 _listeningSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
-                LogDispatcher();
+                LogDispatcher(dispatcher);
 
                 _listeningSocket.Bind(new IPEndPoint(IPAddress.Any, config.Port));
                 _listeningSocket.Listen(128);
 
                 _logger.Info("Server started. Listening port {0}...", config.Port);
 
-                bool updateClusterConnection = true;
-
-                Task clusterConnectionTask = ConnectCluster();
-                Task callbacksInvocationTask = UpdateClusterConnection();
+                Task clusterConnectionTask = ConnectCluster(config, clusterConnection);
+                Task callbacksInvocationTask = UpdateClusterConnection(config, clusterConnection);
 
                 while (true)
                 {
@@ -82,148 +80,17 @@ namespace PingPong.Engine
 
                     _logger.Info("Client connected {0}.", ((IPEndPoint)connectionSocket.RemoteEndPoint).Address);
 
-                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config, counters));
+                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config, counters, certificate), config, session);
                 }
 
-                Volatile.Write(ref updateClusterConnection, false);
+                _updateClusterConnection = false;
 
                 await clusterConnectionTask;
                 await callbacksInvocationTask;
-
-                async void ServeConnection(ServerConnection connection)
-                {
-                    var clientRemoteAddress = ((IPEndPoint)connection.Socket.RemoteEndPoint).Address;
-
-                    try
-                    {
-                        session.SetData(new Session.Data {
-                            InstanceId = config.InstanceId,
-                            ClientRemoteAddress = clientRemoteAddress
-                        });
-
-                        await connection.Serve();
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error(ex, "Connection {0} faulted.", clientRemoteAddress);
-                    }
-                    finally
-                    {
-                        _logger.Info("Client disconnected {0}.", clientRemoteAddress);
-                        connection.Dispose();
-                    }
-                }
-
-                void LogDispatcher()
-                {
-                    _logger.Info("The following message handlers found:");
-                    foreach ((int requestId, int responseId) in dispatcher.GetRequestResponseMap())
-                    {
-                        Type requestType = dispatcher.MessageMap.GetMessageTypeById(requestId);
-                        Type? responseType = responseId > 0 ? dispatcher.MessageMap.GetMessageTypeById(responseId) : null;
-
-                        if (responseType != null)
-                            _logger.Info("  {0} -> {1}", requestType.Name, responseType.Name);
-                        else
-                            _logger.Info("  {0}", requestType.Name);
-                    }
-                }
-
-                ClusterConnection CreateClusterConnection()
-                {
-                    return new ClusterConnection(config.KnownHosts, new ClusterConnectionSettings {
-                        ReconnectionDelay = TimeSpan.FromSeconds(config.ClusterConnectionSettings.ReconnectionDelay)
-                    });
-                }
-
-                async Task ConnectCluster()
-                {
-                    _logger.Info("Connecting cluster after {0} sec.", config.ClusterConnectionSettings.ConnectionDelay);
-
-                    try
-                    {
-                        await clusterConnection.Connect(TimeSpan.FromSeconds(config.ClusterConnectionSettings.ConnectionDelay));
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error(ex, "Failed to connect cluster. Interservice communication is not available.");
-                    }
-                }
-
-                async Task UpdateClusterConnection()
-                {
-                    try
-                    {
-                        while (Volatile.Read(ref updateClusterConnection))
-                        {
-                            clusterConnection.Update();
-
-                            await Task.Delay(TimeSpan.FromMilliseconds(config.ClusterConnectionSettings.InvokeCallbacksPeriodMs));
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Server callbacks are just async completions. They are not expected to throw exceptions.
-                        _logger.Fatal(ex, "Callbacks invocation faulted. No more callbacks will be invoked.");
-                    }
-                }
-
-                IContainer BuildContainer()
-                {
-                    var containerBuilder = new ContainerBuilder();
-                    var serviceConfigsProvider = new ServiceConfigsProvider(config.ServiceConfigs);
-                    
-                    containerBuilder
-                        .RegisterTypes(_serviceTypes.ToArray())
-                        .SingleInstance();
-                    containerBuilder
-                        .RegisterInstance(serviceConfigsProvider)
-                        .As<IConfig>();
-                    containerBuilder
-                        .RegisterInstance(clusterConnection)
-                        .As<ICluster>()
-                        .ExternallyOwned();
-                    containerBuilder
-                        .RegisterInstance(session)
-                        .As<ISession>();
-                    
-                    var containerBuilderWrapper = new ContainerBuilderWrapper(containerBuilder);
-
-                    foreach (Type serviceType in _serviceTypes)
-                    {
-                        try
-                        {
-                            serviceType
-                                .GetMethods()
-                                .FirstOrDefault(IsContainerSetupMethod)
-                                ?.Invoke(null, new object[] { containerBuilderWrapper, serviceConfigsProvider });
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.Error(ex, "Service {0} container setup faulted.", serviceType.FullName);
-                        }
-                    }
-
-                    return containerBuilder.Build();
-
-                    bool IsContainerSetupMethod(MethodInfo methodInfo)
-                    {
-                        if (!(methodInfo.IsStatic && methodInfo.IsPublic))
-                            return false;
-
-                        ParameterInfo[] methodParams = methodInfo.GetParameters();
-                        if (methodParams.Length != 2)
-                            return false;
-
-                        if (methodParams[0].ParameterType != typeof(IContainerBuilder))
-                            return false;
-                        
-                        if (methodParams[1].ParameterType != typeof(IConfig))
-                            return false;
-
-                        return true;
-                    }
-                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Fatal(ex, "Service host faulted.");
             }
             finally
             {
@@ -234,22 +101,181 @@ namespace PingPong.Engine
                 
                 LogManager.Flush();
 
-                serviceHostStopped.Set();
+                _serviceHostStopped.Set();
+            }
+        }
+
+        private void InitSignalHandlers()
+        {
+            // Handling SIGINT
+            Console.CancelKeyPress += (sender, args) => {
+                Stop();
+                args.Cancel = true;
+            };
+
+            // Handling SIGTERM
+            AssemblyLoadContext.Default.Unloading += delegate {
+                Stop();
+                _serviceHostStopped.WaitOne();
+            };
+        }
+
+        private async void ServeConnection(ServerConnection connection, ServiceHostConfig config, Session session)
+        {
+            var clientRemoteAddress = ((IPEndPoint)connection.Socket.RemoteEndPoint).Address;
+
+            try
+            {
+                session.SetData(new Session.Data {
+                    InstanceId = config.InstanceId,
+                    ClientRemoteAddress = clientRemoteAddress
+                });
+
+                await connection.Serve();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Connection {0} faulted.", clientRemoteAddress);
+            }
+            finally
+            {
+                _logger.Info("Client disconnected {0}.", clientRemoteAddress);
+                connection.Dispose();
+            }
+        }
+
+        private static void LogDispatcher(ServiceDispatcher dispatcher)
+        {
+            _logger.Info("The following message handlers found:");
+            foreach ((int requestId, int responseId) in dispatcher.GetRequestResponseMap())
+            {
+                Type requestType = dispatcher.MessageMap.GetMessageTypeById(requestId);
+                Type? responseType = responseId > 0 ? dispatcher.MessageMap.GetMessageTypeById(responseId) : null;
+
+                if (responseType != null)
+                    _logger.Info("  {0} -> {1}", requestType.Name, responseType.Name);
+                else
+                    _logger.Info("  {0}", requestType.Name);
+            }
+        }
+
+        private static async Task<X509Certificate?> LoadCertificate(ServiceHostConfig config)
+        {
+            if (config.TlsSettings == null || string.IsNullOrEmpty(config.TlsSettings.CertificateFile) || string.IsNullOrEmpty(config.TlsSettings.PasswordFile))
+                return null;
+
+            byte[] certificateData = await File.ReadAllBytesAsync(config.TlsSettings.CertificateFile);
+            string password = await File.ReadAllTextAsync(config.TlsSettings.PasswordFile);
+
+            var certificate = new X509Certificate(certificateData, password);
+
+            _logger.Info("Loaded TLS certificate issued by '{0}' for '{1}' SN:'{2}' expires: {3}", 
+                certificate.Issuer, 
+                certificate.Subject, 
+                certificate.GetSerialNumberString(),
+                certificate.GetExpirationDateString()
+            );
+
+            return certificate;
+        }
+
+        private static ClusterConnection CreateClusterConnection(ServiceHostConfig config)
+        {
+            return new ClusterConnection(config.KnownHosts, new ClusterConnectionSettings {
+                ReconnectionDelay = TimeSpan.FromSeconds(config.ClusterConnectionSettings.ReconnectionDelay),
+                MaxRequestHoldTime = TimeSpan.FromSeconds(config.ClusterConnectionSettings.MaxRequestHoldTime),
+                TlsSettings = {
+                    AllowSelfSignedCertificates = config.TlsSettings?.AllowSelfSignedCertificates ?? false
+                }
+            });
+        }
+
+        private static async Task ConnectCluster(ServiceHostConfig config, ClusterConnection clusterConnection)
+        {
+            _logger.Info("Connecting cluster after {0} sec.", config.ClusterConnectionSettings.ConnectionDelay);
+
+            try
+            {
+                await clusterConnection.Connect(TimeSpan.FromSeconds(config.ClusterConnectionSettings.ConnectionDelay));
+            }
+            catch (Exception ex)
+            {
+                _logger.Error(ex, "Failed to connect cluster. Interservice communication is not available.");
+            }
+        }
+
+        private async Task UpdateClusterConnection(ServiceHostConfig config, ClusterConnection clusterConnection)
+        {
+            try
+            {
+                while (_updateClusterConnection)
+                {
+                    clusterConnection.Update();
+
+                    await Task.Delay(TimeSpan.FromMilliseconds(config.ClusterConnectionSettings.InvokeCallbacksPeriodMs));
+                }
+            }
+            catch (Exception ex)
+            {
+                // Server callbacks are just async completions. They are not expected to throw exceptions.
+                _logger.Fatal(ex, "Callbacks invocation faulted. No more callbacks will be invoked.");
+            }
+        }
+
+        private IContainer BuildContainer(ServiceHostConfig config, ClusterConnection clusterConnection, ISession session)
+        {
+            var containerBuilder = new ContainerBuilder();
+            var serviceConfigsProvider = new ServiceConfigsProvider(config.ServiceConfigs);
+            
+            containerBuilder
+                .RegisterTypes(_serviceTypes.ToArray())
+                .SingleInstance();
+            containerBuilder
+                .RegisterInstance(serviceConfigsProvider)
+                .As<IConfig>();
+            containerBuilder
+                .RegisterInstance(clusterConnection)
+                .As<ICluster>()
+                .ExternallyOwned();
+            containerBuilder
+                .RegisterInstance(session)
+                .As<ISession>();
+            
+            var containerBuilderWrapper = new ContainerBuilderWrapper(containerBuilder);
+
+            foreach (Type serviceType in _serviceTypes)
+            {
+                try
+                {
+                    serviceType
+                        .GetMethods()
+                        .FirstOrDefault(IsContainerSetupMethod)
+                        ?.Invoke(null, new object[] { containerBuilderWrapper, serviceConfigsProvider });
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Service {0} container setup faulted.", serviceType.FullName);
+                }
             }
 
-            void InitSignalHandlers()
-            {
-                // Handling SIGINT
-                Console.CancelKeyPress += (sender, args) => {
-                    Stop();
-                    args.Cancel = true;
-                };
+            return containerBuilder.Build();
 
-                // Handling SIGTERM
-                AssemblyLoadContext.Default.Unloading += delegate {
-                    Stop();
-                    serviceHostStopped.WaitOne();
-                };
+            bool IsContainerSetupMethod(MethodInfo methodInfo)
+            {
+                if (!(methodInfo.IsStatic && methodInfo.IsPublic))
+                    return false;
+
+                ParameterInfo[] methodParams = methodInfo.GetParameters();
+                if (methodParams.Length != 2)
+                    return false;
+
+                if (methodParams[0].ParameterType != typeof(IContainerBuilder))
+                    return false;
+                
+                if (methodParams[1].ParameterType != typeof(IConfig))
+                    return false;
+
+                return true;
             }
         }
 

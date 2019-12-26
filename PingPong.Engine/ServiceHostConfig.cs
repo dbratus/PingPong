@@ -16,6 +16,8 @@ namespace PingPong.Engine
 
         public int StatusMessageInterval { get; set; } = 5;
 
+        public TlsSettingsSection? TlsSettings { get; set; }
+
         public ClusterConnectionSettingsSection ClusterConnectionSettings { get; set; } =
             new ClusterConnectionSettingsSection();
 
@@ -25,11 +27,19 @@ namespace PingPong.Engine
         public Dictionary<string, JsonElement> ServiceConfigs { get; set; } = 
             new Dictionary<string, JsonElement>();
 
-        public class ClusterConnectionSettingsSection
+        public sealed class ClusterConnectionSettingsSection
         {
             public int ConnectionDelay { get; set; } = 3;
             public int ReconnectionDelay { get; set; } = 15;
             public int InvokeCallbacksPeriodMs { get; set; } = 100;
+            public int MaxRequestHoldTime { get; set; } = 600;
+        }
+
+        public sealed class TlsSettingsSection
+        {
+            public string CertificateFile { get; set; } = "";
+            public string PasswordFile { get; set; } = "";
+            public bool AllowSelfSignedCertificates { get; set; }
         }
     }
 }

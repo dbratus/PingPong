@@ -16,10 +16,14 @@ namespace PingPong.Client
             InitLogging();
 
             using var connection = new ClusterConnection(new [] { 
-                "tcp://localhost:10000",
+                "tls://localhost:10000",
                 "tcp://localhost:10001" 
+            }, new ClusterConnectionSettings {
+                TlsSettings = {
+                    AllowSelfSignedCertificates = true
+                }
             });
-                
+
             connection.Connect().Wait();
 
             const int requestCount = 10;

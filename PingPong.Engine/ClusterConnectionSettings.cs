@@ -6,5 +6,6 @@ namespace PingPong.Engine
     {
         public TimeSpan ReconnectionDelay { get; set; } = TimeSpan.FromSeconds(15);
         public TimeSpan MaxRequestHoldTime { get; set; } = TimeSpan.FromMinutes(10);
+        public ClientTlsSettings TlsSettings { get; set; } = new ClientTlsSettings();
     }
 }

@@ -1,8 +1,11 @@
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Linq;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -20,6 +23,19 @@ namespace PingPong.Engine
         private readonly DelimitedMessageReader _messageReader;
         private readonly DelimitedMessageWriter _messageWriter;
         private readonly ServiceHostCounters _counters;
+
+        private sealed class TlsData
+        {
+            public X509Certificate Certificate { get; private set; }
+            public SslStream Stream { get; private set; }
+
+            public TlsData(X509Certificate certificate, SslStream stream)
+            {
+                Certificate = certificate;
+                Stream = stream;
+            }
+        }
+        private readonly TlsData? _tls;
 
         private readonly ConcurrentDictionary<Task, object?> _requestHanderTasks =
             new ConcurrentDictionary<Task, object?>();
@@ -42,22 +58,40 @@ namespace PingPong.Engine
             });
         private readonly Task _responsePropagatorTask;
 
-        private readonly Task _hostStatusSenderTask;
+        private Task? _hostStatusSenderTask;
         private readonly CancellationTokenSource _hostStatusSenderCancellation = 
             new CancellationTokenSource();
 
         public Socket Socket =>
             _socket;
 
-        public ServerConnection(Socket socket, ServiceDispatcher dispatcher, ServiceHostConfig config, ServiceHostCounters counters)
+        public ServerConnection(Socket socket, ServiceDispatcher dispatcher, ServiceHostConfig config, ServiceHostCounters counters, X509Certificate? certificate)
         {
             _dispatcher = dispatcher;
             _socket = socket;
             _config = config;
-            _messageReader = new DelimitedMessageReader(new NetworkStream(socket, System.IO.FileAccess.Read, false));
-            _messageWriter = new DelimitedMessageWriter(new NetworkStream(socket, System.IO.FileAccess.Write, false));
+
+            Stream readerStream, writerStream;
+
+            if (config.TlsSettings == null || certificate == null)
+            {
+                readerStream = new NetworkStream(socket, FileAccess.Read, false);
+                writerStream = new NetworkStream(socket, FileAccess.Write, false);
+            }
+            else
+            {
+                var networkStream = new NetworkStream(socket, FileAccess.ReadWrite, false);
+                var tlsStream = new SslStream(networkStream, true);
+
+                readerStream = writerStream = tlsStream;
+
+                _tls = new TlsData(certificate, tlsStream);
+            }
+            
+            _messageReader = new DelimitedMessageReader(readerStream);
+            _messageWriter = new DelimitedMessageWriter(writerStream);
+
             _responsePropagatorTask = PropagateResponses();
-            _hostStatusSenderTask = SendHostStatus();
             _counters = counters;
         }
 
@@ -69,13 +103,15 @@ namespace PingPong.Engine
             _requestHanderTasks.Clear();
 
             _hostStatusSenderCancellation.Cancel();
-            _hostStatusSenderTask.Wait();
+            _hostStatusSenderTask?.Wait();
 
             _responseChan.Writer.Complete();
             _responsePropagatorTask.Wait();
 
             _messageReader.Dispose();
             _messageWriter.Dispose();
+            _tls?.Stream.Dispose();
+
             _socket.Dispose();
         }
 
@@ -83,6 +119,9 @@ namespace PingPong.Engine
         {
             // Yield to get rid of the sync section.
             await Task.Yield();
+
+            if (_tls != null)
+                await _tls.Stream.AuthenticateAsServerAsync(_tls.Certificate);
 
             var preamble = new Preamble
             {
@@ -105,6 +144,8 @@ namespace PingPong.Engine
             };
 
             await _messageWriter.Write(preamble);
+
+            _hostStatusSenderTask = SendHostStatus();
 
             while (true)
             {
@@ -135,68 +176,68 @@ namespace PingPong.Engine
 
             foreach(Task requestHandlerTask in _requestHanderTasks.Keys.ToArray())
                 await requestHandlerTask;
+        }
 
-            async Task HandleWithResponse(RequestHeader requestHeader, object? requestBody)
+        private async Task HandleWithResponse(RequestHeader requestHeader, object? requestBody)
+        {
+            await Task.Yield();
+
+            _counters.PendingProcessing.Decrement();
+            _counters.InProcessing.Increment();
+
+            object? responseBody = null;
+            int messageId = -1;
+            var responseFalgs = ResponseFlags.None;
+
+            try
             {
-                await Task.Yield();
+                responseBody = await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
 
-                _counters.PendingProcessing.Decrement();
-                _counters.InProcessing.Increment();
-
-                object? responseBody = null;
-                int messageId = -1;
-                var responseFalgs = ResponseFlags.None;
-
-                try
-                {
-                    responseBody = await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
-
-                    if (responseBody == null)
-                        responseFalgs |= ResponseFlags.NoBody;
-                    else
-                        messageId = _dispatcher.MessageMap.GetMessageIdByType(responseBody.GetType());
-                }
-                catch (Exception)
-                {
-                    responseFalgs |= ResponseFlags.Error;
-                    throw;
-                }
-                finally
-                {
-                    _counters.PendingResponsePropagation.Increment();
-
-                    await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
-                        RequestNo = requestHeader.RequestNo,
-                        MessageId = messageId,
-                        Flags = responseFalgs
-                    }, responseBody));
-                }
+                if (responseBody == null)
+                    responseFalgs |= ResponseFlags.NoBody;
+                else
+                    messageId = _dispatcher.MessageMap.GetMessageIdByType(responseBody.GetType());
             }
-
-            async Task HandleWithoutResponse(RequestHeader requestHeader, object? requestBody)
+            catch (Exception)
             {
-                await Task.Yield();
-                
-                _counters.PendingProcessing.Decrement();
-                _counters.InProcessing.Increment();
-
-                await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+                responseFalgs |= ResponseFlags.Error;
+                throw;
             }
-
-            async void CompleteRequestHandlerTask(int requestNo, Task task)
+            finally
             {
-                try
-                {
-                    await task;
+                _counters.PendingResponsePropagation.Increment();
 
-                    _requestHanderTasks.TryRemove(task, out var _);
+                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                    RequestNo = requestHeader.RequestNo,
+                    MessageId = messageId,
+                    Flags = responseFalgs
+                }, responseBody));
+            }
+        }
 
-                    _counters.InProcessing.Decrement();
-                }
-                catch(Exception ex)
-                {
-                    _logger.Error(ex, "Request {0} faulted.", requestNo);
-                }
+        private async Task HandleWithoutResponse(RequestHeader requestHeader, object? requestBody)
+        {
+            await Task.Yield();
+            
+            _counters.PendingProcessing.Decrement();
+            _counters.InProcessing.Increment();
+
+            await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+        }
+
+        private async void CompleteRequestHandlerTask(int requestNo, Task task)
+        {
+            try
+            {
+                await task;
+
+                _requestHanderTasks.TryRemove(task, out var _);
+
+                _counters.InProcessing.Decrement();
+            }
+            catch(Exception ex)
+            {
+                _logger.Error(ex, "Request {0} faulted.", requestNo);
             }
         }
 
@@ -248,8 +289,6 @@ namespace PingPong.Engine
 
         private async Task SendHostStatus()
         {
-            await Task.Yield();
-
             while (true)
             {
                 try 

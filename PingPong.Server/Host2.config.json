@@ -4,12 +4,16 @@
 
     "NLogConfigFile": "NLog.config.xml",
 
+    "TlsSettings": {
+        "AllowSelfSignedCertificates": true
+    },
+
     "ServiceAssemblies": [
         "../PingPong.Services/bin/Debug/netstandard2.1/PingPong.Services.dll"
     ],
 
     "KnownHosts": [
-        "tcp://localhost:10000",
+        "tls://localhost:10000",
         "tcp://localhost:10001"
     ],
 

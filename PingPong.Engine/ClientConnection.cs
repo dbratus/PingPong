@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -20,8 +23,21 @@ namespace PingPong.Engine
             _uri;
 
         private readonly Socket _socket;
-        private readonly Lazy<DelimitedMessageReader> _messageReader;
-        private readonly Lazy<DelimitedMessageWriter> _messageWriter;
+
+        private sealed class Network
+        {
+            public SslStream? TlsStream { get; private set; }
+            public DelimitedMessageReader MessageReader { get; private set; }
+            public DelimitedMessageWriter MessageWriter { get; private set; }
+
+            public Network(SslStream? tlsStream, DelimitedMessageReader messageReader, DelimitedMessageWriter messageWriter)
+            {
+                TlsStream = tlsStream;
+                MessageReader = messageReader;
+                MessageWriter = messageWriter;
+            }
+        }
+        private readonly Lazy<Network> _net;
 
         private readonly MessageMap _messageMap = new MessageMap();
         private readonly Dictionary<int, int> _reqestResponseMap 
@@ -123,19 +139,50 @@ namespace PingPong.Engine
         public HostStatusData HostStatus =>
             _hostStatus;
 
+        private readonly ClientTlsSettings _tlsSettings;
+
         public ClientConnection(string uri) :
-            this(new RequestNoGenerator(), uri)
+            this(new RequestNoGenerator(), new ClientTlsSettings(), uri)
         {
         }
 
-        internal ClientConnection(RequestNoGenerator requestNoGenerator, string uri)
+        public ClientConnection(ClientTlsSettings tlsSettings, string uri) :
+            this(new RequestNoGenerator(), tlsSettings, uri)
+        {
+        }
+
+        internal ClientConnection(RequestNoGenerator requestNoGenerator, ClientTlsSettings tlsSettings, string uri)
         {
             _uri = uri;
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
 
-            _messageReader = new Lazy<DelimitedMessageReader>(() => new DelimitedMessageReader(new NetworkStream(_socket, System.IO.FileAccess.Read, false)));
-            _messageWriter = new Lazy<DelimitedMessageWriter>(() => new DelimitedMessageWriter(new NetworkStream(_socket, System.IO.FileAccess.Write, false)));
+            _net = new Lazy<Network>(() => {
+                var uriBuilder = new UriBuilder(uri);
+                Stream readerStream, writerStream;
+                SslStream? tlsStream = null;
+
+                switch (uriBuilder.Scheme)
+                {
+                    case "tcp":
+                        readerStream = new NetworkStream(_socket, FileAccess.Read, false);
+                        writerStream = new NetworkStream(_socket, FileAccess.Write, false);
+                    break;
+                    case "tls":
+                        tlsStream = new SslStream(new NetworkStream(_socket, FileAccess.ReadWrite, false), true, TlsAuthenticate);
+                        readerStream = writerStream = tlsStream;
+                    break;
+                    default:
+                        throw new ProtocolException($"Scheme '{uriBuilder.Scheme}' is not supported.");
+                }
+
+                var messageReader = new DelimitedMessageReader(readerStream);
+                var messageWriter = new DelimitedMessageWriter(writerStream);
+
+                return new Network(tlsStream, messageReader, messageWriter);
+            });
+
             _requestNoGenerator = requestNoGenerator;
+            _tlsSettings = tlsSettings;
         }
 
         public void Dispose()
@@ -149,16 +196,19 @@ namespace PingPong.Engine
                 _requestPropagatorTask.Wait();
             }
 
-            if (_responseReceiverTask != null)
-                _responseReceiverTask.Wait();
+            _responseReceiverTask?.Wait();
 
-            if (_messageReader.IsValueCreated)
-                _messageReader.Value.Dispose();
-            
-            if (_messageWriter.IsValueCreated)
-                _messageWriter.Value.Dispose();
+            if (_net.IsValueCreated)
+            {
+                Network net = _net.Value;
+
+                net.MessageReader.Dispose();
+                net.MessageWriter.Dispose();
+                net.TlsStream?.Dispose();
+            }
 
             _socket.Dispose();
+
             Status = ClientConnectionStatus.Disposed;
         }
 
@@ -192,7 +242,12 @@ namespace PingPong.Engine
                 
                 await _socket.ConnectAsync(uriBuilder.Host, uriBuilder.Port);
 
-                var preamble = await _messageReader.Value.Read<Preamble>();
+                Network net = _net.Value;
+
+                if (net.TlsStream != null)
+                    await net.TlsStream.AuthenticateAsClientAsync(uriBuilder.Host);
+
+                var preamble = await net.MessageReader.Read<Preamble>();
 
                 _instanceId = preamble.InstanceId;
 
@@ -224,6 +279,18 @@ namespace PingPong.Engine
 
                 throw;
             }
+        }
+
+        private bool TlsAuthenticate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+        {
+            if (sslPolicyErrors == SslPolicyErrors.None)
+                return true;
+
+            if (sslPolicyErrors == SslPolicyErrors.RemoteCertificateChainErrors && _tlsSettings.AllowSelfSignedCertificates)
+                return true;
+
+            _logger.Warn("Server TLS certificate rejected {0}", sslPolicyErrors);
+            return false;
         }
 
         public ClientConnection Send<TRequest>(bool instanceAffinity) 
@@ -416,14 +483,14 @@ namespace PingPong.Engine
 
                     try
                     {
-                        await _messageWriter.Value.Write(new RequestHeader {
+                        await _net.Value.MessageWriter.Write(new RequestHeader {
                             RequestNo = requestNo,
                             MessageId = messageId,
                             Flags = flags
                         });
 
                         if (nextRequest.Body != null)
-                            await _messageWriter.Value.Write(nextRequest.Body);
+                            await _net.Value.MessageWriter.Write(nextRequest.Body);
                         
                         if (nextRequest.Callback == null)
                             Interlocked.Decrement(ref _pendingRequestsCount);
@@ -437,7 +504,7 @@ namespace PingPong.Engine
                     }
                 }
 
-                await _messageWriter.Value.Write(new RequestHeader{});
+                await _net.Value.MessageWriter.Write(new RequestHeader{});
             }
             catch (Exception ex)
             {
@@ -455,7 +522,7 @@ namespace PingPong.Engine
             {
                 while (true)
                 {
-                    var responseHeader = await _messageReader.Value.Read<ResponseHeader>();
+                    var responseHeader = await _net.Value.MessageReader.Read<ResponseHeader>();
 
                     if ((responseHeader.Flags & ResponseFlags.Termination) == ResponseFlags.Termination)
                         break;
@@ -470,12 +537,12 @@ namespace PingPong.Engine
                     if ((responseHeader.Flags & ResponseFlags.NoBody) == ResponseFlags.None)
                     {
                         Type responseType = _messageMap.GetMessageTypeById(responseHeader.MessageId);
-                        responseBody = await _messageReader.Value.Read(responseType);
+                        responseBody = await _net.Value.MessageReader.Read(responseType);
                     }
 
                     if ((responseHeader.Flags & ResponseFlags.HostStatus) == ResponseFlags.HostStatus)
                     {
-                        var hostStatusMessage = await _messageReader.Value.Read<HostStatusMessage>();
+                        var hostStatusMessage = await _net.Value.MessageReader.Read<HostStatusMessage>();
 
                         _hostStatus.PendingProcessing = hostStatusMessage.PendingProcessing;
                         _hostStatus.InProcessing = hostStatusMessage.InProcessing;
