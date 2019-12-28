@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace PingPong.HostInterfaces
@@ -33,5 +34,18 @@ namespace PingPong.HostInterfaces
             where TEvent: class;
         Task PublishAsync<TEvent>(TEvent ev)
             where TEvent: class;
+
+        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>()
+            where TRequest: class
+            where TResponse: class;
+        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(TRequest request)
+            where TRequest: class 
+            where TResponse: class;
+        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(int instanceId)
+            where TRequest: class 
+            where TResponse: class;
+        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(int instanceId, TRequest request)
+            where TRequest: class 
+            where TResponse: class;
     }
 }

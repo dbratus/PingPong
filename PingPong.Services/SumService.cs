@@ -36,7 +36,7 @@ namespace PingPong.Services
             _logger.Info("Value to sum received {0} {1}, current sum {2}", request.CounterId, request.Value, sum);
         }
 
-        public GetSumResponse GetSumm(GetSumRequest request)
+        public GetSumResponse GetSum(GetSumRequest request)
         {
             int sum = _counters.GetOrAdd(request.CounterId, id => -1);
             _logger.Info("Sum requested {0}, response {1}", request.CounterId, sum);

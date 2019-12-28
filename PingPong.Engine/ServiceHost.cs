@@ -249,7 +249,7 @@ namespace PingPong.Engine
                 {
                     clusterConnection.Update();
 
-                    await Task.Delay(TimeSpan.FromMilliseconds(config.ClusterConnectionSettings.InvokeCallbacksPeriodMs));
+                    await Task.Delay(TimeSpan.FromMilliseconds(config.ClusterConnectionSettings.UpdatePeriodMs));
                 }
             }
             catch (Exception ex)
