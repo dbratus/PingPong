@@ -1,0 +1,22 @@
+{
+    "Port": 10101,
+    "InstanceId": 20,
+    "Gateway": true,
+
+    "NLogConfigFile": "NLog.config.xml",
+
+    "TlsSettings": {
+        "CertificateFile": "../Certificates/Test.p12",
+        "PasswordFile": "../Certificates/Password",
+        "AllowSelfSignedCertificates": true
+    },
+
+    "MessageAssemblies": [
+        "../PingPong.Messages/bin/Debug/netstandard2.1/PingPong.Messages.dll"
+    ],
+
+    "KnownHosts": [
+        "tcp://localhost:10000",
+        "tcp://localhost:10001"
+    ]
+}

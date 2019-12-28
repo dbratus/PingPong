@@ -12,9 +12,14 @@ namespace PingPong.Engine
         public string[] ServiceAssemblies { get; set; } = 
             new string[0];
 
+        public string[] MessageAssemblies { get; set; } = 
+            new string[0];
+
         public string NLogConfigFile { get; set; } = "";
 
         public int StatusMessageInterval { get; set; } = 5;
+
+        public bool Gateway { get; set; }
 
         public TlsSettingsSection? TlsSettings { get; set; }
 

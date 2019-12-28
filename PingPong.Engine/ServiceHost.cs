@@ -40,6 +40,7 @@ namespace PingPong.Engine
             try
             {
                 ConfigureLogger(config);
+                LoadMessageAssemblies(config.MessageAssemblies);
                 LoadServiceAssemblies(config.ServiceAssemblies);
                 InitSignalHandlers();
 
@@ -50,20 +51,34 @@ namespace PingPong.Engine
                 using ClusterConnection clusterConnection = CreateClusterConnection(config);
                 using IContainer container = BuildContainer(config, clusterConnection, session);
                 
-                var dispatcher = new ServiceDispatcher(container, _serviceTypes);
+                var dispatcher = new ServiceDispatcher(container, _serviceTypes, clusterConnection);
 
                 _listeningSocket = new Socket(SocketType.Stream, ProtocolType.IP);
                 _listeningSocket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
 
-                LogDispatcher(dispatcher);
-
                 _listeningSocket.Bind(new IPEndPoint(IPAddress.Any, config.Port));
                 _listeningSocket.Listen(128);
 
-                _logger.Info("Server started. Listening port {0}...", config.Port);
+                if (config.Gateway)
+                    _logger.Info("Server started as gateway. Listening port {0}...", config.Port);
+                else
+                    _logger.Info("Server started. Listening port {0}...", config.Port);
 
                 Task clusterConnectionTask = ConnectCluster(config, clusterConnection);
                 Task callbacksInvocationTask = UpdateClusterConnection(config, clusterConnection);
+
+                // If it is a gateway, the host waits for the cluster connection to obtain
+                // message maps, initializes routes and only then accepts connections.
+                //
+                // The first connection attempt tries to connect only once, so it is assumed
+                // that the cluster itself is completely up before all its gateways.
+                if (config.Gateway)
+                {
+                    await clusterConnectionTask;
+                    dispatcher.InitGatewayRouts();
+                }
+
+                LogDispatcher(dispatcher);
 
                 while (true)
                 {
@@ -197,6 +212,8 @@ namespace PingPong.Engine
             try
             {
                 await clusterConnection.Connect(TimeSpan.FromSeconds(config.ClusterConnectionSettings.ConnectionDelay));
+
+                _logger.Info("Cluster connected.");
             }
             catch (Exception ex)
             {
@@ -293,6 +310,12 @@ namespace PingPong.Engine
         {
             LogManager.Configuration = new XmlLoggingConfiguration(config.NLogConfigFile);
             LogManager.Configuration.Variables["instanceId"] = config.InstanceId.ToString();
+        }
+
+        private void LoadMessageAssemblies(string[] assemblies)
+        {
+            foreach (string assemblyPath in assemblies)
+                Assembly.LoadFrom(assemblyPath);
         }
 
         private void LoadServiceAssemblies(string[] assemblies)

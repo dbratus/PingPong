@@ -16,7 +16,7 @@ namespace PingPong.Client
             InitLogging();
 
             using var connection = new ClusterConnection(new [] { 
-                "tls://localhost:10000",
+                "tcp://localhost:10000",
                 "tcp://localhost:10001" 
             }, new ClusterConnectionSettings {
                 TlsSettings = {
@@ -68,6 +68,31 @@ namespace PingPong.Client
             while (connection.HasPendingRequests)
             {
                 connection.Update();
+                Thread.Sleep(1);
+            }
+
+            using var gateway = new ClusterConnection(new [] { 
+                "tls://localhost:10100",
+                "tls://localhost:10101" 
+            }, new ClusterConnectionSettings {
+                TlsSettings = {
+                    AllowSelfSignedCertificates = true
+                }
+            });
+
+            gateway.Connect().Wait();
+
+            for (int i = 0; i < requestCount; ++i)
+            {
+                int arg = i;
+                gateway.Send(new SquareRequest { Value = arg }, (SquareResponse? response, RequestResult result) => {
+                    Console.WriteLine($"Square response received from the gateway {arg}^2 = {response?.Result}");
+                });
+            }
+
+            while (gateway.HasPendingRequests)
+            {
+                gateway.Update();
                 Thread.Sleep(1);
             }
 

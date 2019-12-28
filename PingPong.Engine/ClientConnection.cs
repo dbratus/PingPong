@@ -45,6 +45,14 @@ namespace PingPong.Engine
         public IEnumerable<Type> SupportedRequestTypes =>
             _reqestResponseMap.Keys.Select(_messageMap.GetMessageTypeById);
 
+        public IEnumerable<(Type RequestType, Type? ResponseType)> RequestResponseMap =>
+            _reqestResponseMap
+                .Select(kv => (
+                    _messageMap.GetMessageTypeById(kv.Key),
+                    kv.Value > 0 ? _messageMap.GetMessageTypeById(kv.Value) : null
+                ))
+                .Distinct();
+
         private readonly RequestNoGenerator _requestNoGenerator;
 
         private Task? _requestPropagatorTask;

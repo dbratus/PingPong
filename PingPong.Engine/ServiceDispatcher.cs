@@ -5,6 +5,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading.Tasks;
 using Autofac;
+using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
 {
@@ -12,16 +13,19 @@ namespace PingPong.Engine
     {
         private readonly Dictionary<int, IRequestHanlder> _messageHandlersById = 
             new Dictionary<int, IRequestHanlder>();
-        private readonly (int RequestId, int ResponseId)[] _requestResponseMessageMap;
-        private readonly MessageMap _messageMap = new MessageMap();
+        private readonly Dictionary<int, int> _requestResponseMessageMap =
+            new Dictionary<int, int>();
+        private readonly ClusterConnection _clusterConnection;
 
+        private readonly MessageMap _messageMap = new MessageMap();
         public MessageMap MessageMap =>
             _messageMap;
 
-        public ServiceDispatcher(IContainer container, List<Type> serviceTypes)
+        private int _nextMessageId = 1;
+
+        public ServiceDispatcher(IContainer container, List<Type> serviceTypes, ClusterConnection clusterConnection)
         {
-            int nextMessageId = 1;
-            var requestResponseMessageMap = new List<(int, int)>();
+            _clusterConnection = clusterConnection;
 
             foreach (Type serviceType in serviceTypes)
             {
@@ -42,7 +46,7 @@ namespace PingPong.Engine
                         int requestMessageId;
                         if (!_messageMap.ContainsType(requestMessageType))
                         {
-                            requestMessageId = nextMessageId++;
+                            requestMessageId = _nextMessageId++;
                             _messageMap.Add(requestMessageType, requestMessageId);
                         }
                         else
@@ -61,28 +65,63 @@ namespace PingPong.Engine
                         {
                             if (!_messageMap.ContainsType(responseMessageType))
                             {
-                                int responseMessageId = nextMessageId++;
+                                int responseMessageId = _nextMessageId++;
                                 _messageMap.Add(responseMessageType, responseMessageId);
-                                requestResponseMessageMap.Add((requestMessageId, responseMessageId));
+                                _requestResponseMessageMap[requestMessageId] = responseMessageId;
                             }
                             else
                             {
-                                requestResponseMessageMap.Add((requestMessageId, _messageMap.GetMessageIdByType(responseMessageType)));
+                                _requestResponseMessageMap[requestMessageId] = _messageMap.GetMessageIdByType(responseMessageType);
                             }
                         }
                         else
                         {
-                            requestResponseMessageMap.Add((requestMessageId, -1));
+                            _requestResponseMessageMap[requestMessageId] = -1;
                         }
                     }
                 }
             }
+        }
 
-            _requestResponseMessageMap = requestResponseMessageMap.Distinct().ToArray();
+        public void InitGatewayRouts()
+        {
+            foreach ((Type requestType, Type? responseType) in _clusterConnection.RequestResponseMap)
+            {
+                int requestTypeId;
+                if (!_messageMap.TryGetMessageIdByType(requestType, out requestTypeId))
+                {
+                    requestTypeId = _nextMessageId++;
+                    _messageMap.Add(requestType, requestTypeId);
+                }
+
+                int responseTypeId = -1;
+                if (responseType != null)
+                {
+                    if (!_messageMap.TryGetMessageIdByType(responseType, out responseTypeId))
+                    {
+                        responseTypeId = _nextMessageId++;
+                        _messageMap.Add(responseType, responseTypeId);
+                    }
+                }
+
+                // Routing handlers do not replace the own handlers of the host.
+                if (!_messageHandlersById.ContainsKey(requestTypeId))
+                {
+                    IRequestHanlder requestHanlder;
+
+                    if (responseType != null)
+                        requestHanlder = new RoutingRequestHandler(_clusterConnection, requestType);
+                    else
+                        requestHanlder = new RoutingOneWayRequestHandler(_clusterConnection, requestType);
+
+                    _messageHandlersById.Add(requestTypeId, requestHanlder);
+                    _requestResponseMessageMap.Add(requestTypeId, responseTypeId);
+                }
+            }
         }
 
         public IEnumerable<(int RequestId, int ResponseId)> GetRequestResponseMap() =>
-            _requestResponseMessageMap;
+            _requestResponseMessageMap.Select(kv => (kv.Key, kv.Value));
 
         public Task<object?> InvokeServiceMethod(int messageId, object? request) =>
             _messageHandlersById[messageId].Invoke(request);
@@ -288,6 +327,42 @@ namespace PingPong.Engine
             {
                 _serviceMethod(_serviceInstance.Value, request);
                 return Task.FromResult<object?>(null);
+            }
+        }
+
+        private class RoutingOneWayRequestHandler : IRequestHanlder
+        {
+            protected readonly ClusterConnection _clusterConnection;
+            protected readonly Type _requestType;
+
+            public RoutingOneWayRequestHandler(ClusterConnection clusterConnection, Type requestType)
+            {
+                _clusterConnection = clusterConnection;
+                _requestType = requestType;
+            }
+
+            public virtual Task<object?> Invoke(object? request)
+            {
+                _clusterConnection.Send(request, _requestType);
+                return Task.FromResult<object?>(null);
+            }
+        }
+
+        private sealed class RoutingRequestHandler : RoutingOneWayRequestHandler
+        {
+            public RoutingRequestHandler(ClusterConnection clusterConnection, Type requestType)
+                : base(clusterConnection, requestType)
+            {
+            }
+
+            public override async Task<object?> Invoke(object? request)
+            {
+                (object? response, RequestResult result) = await _clusterConnection.SendAsync(request, _requestType);
+
+                if (result != RequestResult.OK)
+                    throw new CommunicationException($"Failed to route a message: ${result}.");
+
+                return response;
             }
         }
     }

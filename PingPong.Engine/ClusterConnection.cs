@@ -27,6 +27,12 @@ namespace PingPong.Engine
         private readonly ConcurrentDictionary<Type, ConnectionSelector> _routingMap = 
             new ConcurrentDictionary<Type, ConnectionSelector>();
 
+        public IEnumerable<(Type RequestType, Type? ResponseType)> RequestResponseMap =>
+            _connections
+                .Where(conn => conn != null)
+                .SelectMany(conn => conn?.RequestResponseMap)
+                .Distinct();
+
         private volatile ClusterConnectionStatus _status = 
             ClusterConnectionStatus.NotConnected;
         public ClusterConnectionStatus Status =>
@@ -190,6 +196,21 @@ namespace PingPong.Engine
             selector.SelectConnection(_connections)?.Send(false, request);
         }
 
+        internal void Send(object? request, Type requestType)
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(requestType, out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, requestType, request, null));
+                return;
+            }
+
+            selector.SelectConnection(_connections)?.Send(
+                new ClientConnection.RequestQueueEntry(-1, requestType, request, null)
+            );
+        }
+
         public void Send<TRequest>(int instanceId, TRequest request)
             where TRequest: class 
         {
@@ -230,6 +251,29 @@ namespace PingPong.Engine
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
             };
+        }
+
+        internal void Send(object? request, Type requestType, Action<object?, RequestResult> callback)
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(requestType, out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    -1,
+                    requestType, 
+                    request, 
+                    callback
+                ));
+                return;
+            }
+
+            selector.SelectConnection(_connections)?.Send(new ClientConnection.RequestQueueEntry(
+                -1,
+                requestType,
+                request, 
+                callback
+            ));
         }
 
         public void Send<TRequest>(TRequest request, Action<RequestResult> callback)
@@ -318,6 +362,19 @@ namespace PingPong.Engine
 
             Send<TRequest, TResponse>(
                 request, 
+                (response, result) => completionSource.SetResult((response, result))
+            );
+
+            return completionSource.Task;
+        }
+
+        internal Task<(object?, RequestResult)> SendAsync(object? request, Type requestType)
+        {
+            var completionSource = new TaskCompletionSource<(object?, RequestResult)>();
+
+            Send(
+                request, 
+                requestType,
                 (response, result) => completionSource.SetResult((response, result))
             );
 

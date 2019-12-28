@@ -13,7 +13,7 @@
     ],
 
     "KnownHosts": [
-        "tls://localhost:10000",
+        "tcp://localhost:10000",
         "tcp://localhost:10001"
     ],
 
