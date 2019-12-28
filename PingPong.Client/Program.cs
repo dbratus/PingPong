@@ -75,6 +75,7 @@ namespace PingPong.Client
                 "tls://localhost:10100",
                 "tls://localhost:10101" 
             }, new ClusterConnectionSettings {
+                Serializer = new SerializerJson(),
                 TlsSettings = {
                     AllowSelfSignedCertificates = true
                 }

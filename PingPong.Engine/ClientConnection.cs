@@ -150,16 +150,16 @@ namespace PingPong.Engine
         private readonly ClientTlsSettings _tlsSettings;
 
         public ClientConnection(string uri) :
-            this(new RequestNoGenerator(), new ClientTlsSettings(), uri)
+            this(new RequestNoGenerator(), new ClientTlsSettings(), new SerializerMessagePack(), uri)
         {
         }
 
-        public ClientConnection(ClientTlsSettings tlsSettings, string uri) :
-            this(new RequestNoGenerator(), tlsSettings, uri)
+        public ClientConnection(ClientTlsSettings tlsSettings, ISerializer serializer, string uri) :
+            this(new RequestNoGenerator(), tlsSettings, serializer, uri)
         {
         }
 
-        internal ClientConnection(RequestNoGenerator requestNoGenerator, ClientTlsSettings tlsSettings, string uri)
+        internal ClientConnection(RequestNoGenerator requestNoGenerator, ClientTlsSettings tlsSettings, ISerializer serializer, string uri)
         {
             _uri = uri;
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
@@ -183,8 +183,8 @@ namespace PingPong.Engine
                         throw new ProtocolException($"Scheme '{uriBuilder.Scheme}' is not supported.");
                 }
 
-                var messageReader = new DelimitedMessageReader(readerStream);
-                var messageWriter = new DelimitedMessageWriter(writerStream);
+                var messageReader = new DelimitedMessageReader(readerStream, serializer);
+                var messageWriter = new DelimitedMessageWriter(writerStream, serializer);
 
                 return new Network(tlsStream, messageReader, messageWriter);
             });

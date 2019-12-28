@@ -3,7 +3,6 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
 using System.Threading.Tasks;
-using MessagePack;
 
 namespace PingPong.Engine
 {
@@ -11,10 +10,12 @@ namespace PingPong.Engine
     {
         private readonly Stream _stream;
         private readonly byte[] _messageSizeBuffer = new byte[sizeof(int)];
+        private readonly ISerializer _serializer;
         
-        public DelimitedMessageReader(Stream stream)
+        public DelimitedMessageReader(Stream stream, ISerializer serializer)
         {
             _stream = stream;
+            _serializer = serializer;
         }
 
         public void Dispose() =>
@@ -34,7 +35,7 @@ namespace PingPong.Engine
 
             await _stream.ReadAsync(messageMemory);
 
-            return MessagePackSerializer.Deserialize(type, messageMemory);
+            return _serializer.Deserialize(type, messageMemory);
         }
     }
 }

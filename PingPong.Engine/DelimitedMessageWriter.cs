@@ -11,10 +11,12 @@ namespace PingPong.Engine
     {
         private readonly Stream _stream;
         private readonly ArrayBufferWriter<byte> _buffer = new ArrayBufferWriter<byte>();
+        private readonly ISerializer _serializer;
 
-        public DelimitedMessageWriter(Stream stream)
+        public DelimitedMessageWriter(Stream stream, ISerializer serializer)
         {
             _stream = stream;
+            _serializer = serializer;
         }
 
         public void Dispose() =>
@@ -22,7 +24,7 @@ namespace PingPong.Engine
 
         public async Task Write(object message)
         {
-            MessagePackSerializer.Serialize(_buffer, message);
+            _serializer.Serialize(_buffer, message);
 
             ReadOnlyMemory<byte> messageMemory = _buffer.WrittenMemory;
             ReadOnlyMemory<byte> messageSizeMemory = WriteMessageSize();

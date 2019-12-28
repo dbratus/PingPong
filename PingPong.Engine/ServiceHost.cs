@@ -31,7 +31,7 @@ namespace PingPong.Engine
             _serviceTypes.AddRange(assembly.ExportedTypes.Where(t => t.Name.EndsWith("Service")));
             return this;
         }
-
+        
         public async Task Start(ServiceHostConfig config)
         {
             if (_listeningSocket != null)
@@ -42,13 +42,17 @@ namespace PingPong.Engine
                 ConfigureLogger(config);
                 LoadMessageAssemblies(config.MessageAssemblies);
                 LoadServiceAssemblies(config.ServiceAssemblies);
+
+                var incomingSerializer = (ISerializer)Activator.CreateInstance(Type.GetType(config.Serializer));
+                var outgoingSerializer = (ISerializer)Activator.CreateInstance(Type.GetType(config.ClusterConnectionSettings.Serializer));
+
                 InitSignalHandlers();
 
                 X509Certificate? certificate = await LoadCertificate(config);
                 var session = new Session();
                 var counters = new ServiceHostCounters();
 
-                using ClusterConnection clusterConnection = CreateClusterConnection(config);
+                using ClusterConnection clusterConnection = CreateClusterConnection(config, outgoingSerializer);
                 using IContainer container = BuildContainer(config, clusterConnection, session);
                 
                 var dispatcher = new ServiceDispatcher(container, _serviceTypes, clusterConnection);
@@ -95,7 +99,7 @@ namespace PingPong.Engine
 
                     _logger.Info("Client connected {0}.", ((IPEndPoint)connectionSocket.RemoteEndPoint).Address);
 
-                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config, counters, certificate), config, session);
+                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config, counters, incomingSerializer, certificate), config, session);
                 }
 
                 _updateClusterConnection = false;
@@ -194,11 +198,12 @@ namespace PingPong.Engine
             return certificate;
         }
 
-        private static ClusterConnection CreateClusterConnection(ServiceHostConfig config)
+        private static ClusterConnection CreateClusterConnection(ServiceHostConfig config, ISerializer serializer)
         {
             return new ClusterConnection(config.KnownHosts, new ClusterConnectionSettings {
                 ReconnectionDelay = TimeSpan.FromSeconds(config.ClusterConnectionSettings.ReconnectionDelay),
                 MaxRequestHoldTime = TimeSpan.FromSeconds(config.ClusterConnectionSettings.MaxRequestHoldTime),
+                Serializer = serializer,
                 TlsSettings = {
                     AllowSelfSignedCertificates = config.TlsSettings?.AllowSelfSignedCertificates ?? false
                 }

@@ -65,7 +65,7 @@ namespace PingPong.Engine
         public Socket Socket =>
             _socket;
 
-        public ServerConnection(Socket socket, ServiceDispatcher dispatcher, ServiceHostConfig config, ServiceHostCounters counters, X509Certificate? certificate)
+        public ServerConnection(Socket socket, ServiceDispatcher dispatcher, ServiceHostConfig config, ServiceHostCounters counters, ISerializer serializer, X509Certificate? certificate)
         {
             _dispatcher = dispatcher;
             _socket = socket;
@@ -88,8 +88,8 @@ namespace PingPong.Engine
                 _tls = new TlsData(certificate, tlsStream);
             }
             
-            _messageReader = new DelimitedMessageReader(readerStream);
-            _messageWriter = new DelimitedMessageWriter(writerStream);
+            _messageReader = new DelimitedMessageReader(readerStream, serializer);
+            _messageWriter = new DelimitedMessageWriter(writerStream, serializer);
 
             _responsePropagatorTask = PropagateResponses();
             _counters = counters;

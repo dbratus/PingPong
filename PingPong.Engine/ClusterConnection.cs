@@ -99,7 +99,7 @@ namespace PingPong.Engine
 
             for (int i = 0; i < _connections.Length; ++i)
             {
-                var conn = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, _uris[i]);
+                var conn = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, _settings.Serializer, _uris[i]);
                 
                 try
                 {
@@ -650,7 +650,7 @@ namespace PingPong.Engine
 
                 if (isConnectionBroken)
                 {
-                    var newConnection = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, connection.Uri);
+                    var newConnection = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, _settings.Serializer, connection.Uri);
                     Task connectionTask = newConnection.Connect(_settings.ReconnectionDelay);
                     
                     Volatile.Write(ref _connections[i], newConnection);

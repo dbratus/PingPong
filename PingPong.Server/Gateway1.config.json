@@ -2,6 +2,7 @@
     "Port": 10100,
     "InstanceId": 10,
     "Gateway": true,
+    "Serializer": "PingPong.Engine.SerializerJson",
 
     "NLogConfigFile": "NLog.config.xml",
 

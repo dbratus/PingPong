@@ -21,6 +21,8 @@ namespace PingPong.Engine
 
         public bool Gateway { get; set; }
 
+        public string Serializer { get; set; } = "PingPong.Engine.SerializerMessagePack";
+
         public TlsSettingsSection? TlsSettings { get; set; }
 
         public ClusterConnectionSettingsSection ClusterConnectionSettings { get; set; } =
@@ -38,6 +40,7 @@ namespace PingPong.Engine
             public int ReconnectionDelay { get; set; } = 15;
             public int InvokeCallbacksPeriodMs { get; set; } = 100;
             public int MaxRequestHoldTime { get; set; } = 600;
+            public string Serializer { get; set; } = "PingPong.Engine.SerializerMessagePack";
         }
 
         public sealed class TlsSettingsSection

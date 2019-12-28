@@ -17,7 +17,7 @@ namespace PingPong.Engine
             where TConfigSection : new()
         {
             if (_serviceConfigs.TryGetValue(typeof(TService).FullName, out JsonElement config))
-                return JsonSerializer.Deserialize<TConfigSection>(config.GetRawText());
+                return System.Text.Json.JsonSerializer.Deserialize<TConfigSection>(config.GetRawText());
 
             return new TConfigSection();
         }
