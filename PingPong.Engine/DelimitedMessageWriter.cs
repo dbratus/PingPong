@@ -33,15 +33,40 @@ namespace PingPong.Engine
             await _stream.WriteAsync(messageMemory);
 
             _buffer.Clear();
+        }
 
-            ReadOnlyMemory<byte> WriteMessageSize()
+        private ReadOnlyMemory<byte> WriteMessageSize()
+        {
+            // Message size is written as protobuf base 128 varint.
+            // https://developers.google.com/protocol-buffers/docs/encoding#varints
+
+            int messageSize = _buffer.WrittenCount;
+            int varint = messageSize;
+
+            const int maxVarintSize = 5;
+            Span<byte> buff = stackalloc byte[maxVarintSize];
+
+            const int base128Mask = 0x7F;
+            const int highBit = 0x80;
+            int varintLen = 0;
+
+            while (true)
             {
-                Span<byte> sizeSpan = stackalloc byte[sizeof(int)];
-                int messageSize = _buffer.WrittenCount;
-                BinaryPrimitives.WriteInt32LittleEndian(sizeSpan, messageSize);
-                _buffer.Write(sizeSpan);
-                return _buffer.WrittenMemory.Slice(messageSize, sizeof(int));
+                buff[varintLen] = (byte)(varint & base128Mask);
+                varint >>= 7;
+
+                if (varint == 0)
+                    break;
+
+                buff[varintLen] |= highBit;
+                ++varintLen;
             }
+
+            ++varintLen;
+
+            _buffer.Write(buff.Slice(0, varintLen));
+            
+            return _buffer.WrittenMemory.Slice(messageSize, varintLen);
         }
     }
 }

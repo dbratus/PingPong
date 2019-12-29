@@ -2,14 +2,14 @@ using System;
 
 namespace PingPong.Engine
 {
-    public class CommunicationException : Exception
+    public sealed class CommunicationException : Exception
     {
-        public CommunicationException(string message)
+        internal CommunicationException(string message)
             : base (message)
         {
         }
 
-        public CommunicationException(string message, Exception? innerException)
+        internal CommunicationException(string message, Exception? innerException)
             : base (message, innerException)
         {
         }

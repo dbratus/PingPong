@@ -4,8 +4,14 @@ namespace PingPong.Engine
 {
     public sealed class ProtocolException : Exception
     {
-        public ProtocolException(string message) : base(message) {}
+        internal ProtocolException(string message) 
+            : base(message) 
+        {
+        }
         
-        public ProtocolException(string message, Exception? innerException) : base(message, innerException) {}
+        internal ProtocolException(string message, Exception? innerException) 
+            : base(message, innerException) 
+        {
+        }
     }
 }
