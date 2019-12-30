@@ -16,6 +16,10 @@
         "../PingPong.Messages/bin/Debug/netstandard2.1/PingPong.Messages.dll"
     ],
 
+    "ServiceAssemblies": [
+        "../PingPong.GatewayServices/bin/Debug/netstandard2.1/PingPong.GatewayServices.dll"
+    ],
+
     "KnownHosts": [
         "tcp://localhost:10000",
         "tcp://localhost:10001"

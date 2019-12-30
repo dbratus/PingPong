@@ -5,6 +5,8 @@ namespace PingPong.Messages
     [MessagePackObject]
     public class StreamingRequest
     {
+        [Key(0)]
+        public int Count { get; set; }
     }
 
     [MessagePackObject]

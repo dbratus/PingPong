@@ -428,6 +428,33 @@ namespace PingPong.Engine
             return completionSource.Task;
         }
 
+        public ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(TRequest request)
+            where TRequest: class 
+            where TResponse: class
+        {
+            var channel = Channel.CreateUnbounded<(TResponse?, RequestResult)>();
+
+            OpenChannel<TRequest, TResponse>(
+                request, 
+                (response, result) => 
+                { 
+                    if (response == null)
+                    {
+                        if (result != RequestResult.OK)
+                            channel.Writer.TryWrite((null, result));
+                        
+                        channel.Writer.Complete();
+                    }
+                    else
+                    {
+                        channel.Writer.TryWrite((response, result));
+                    }
+                }
+            );
+
+            return channel.Reader;
+        }
+
         internal Task<(object?, RequestResult)> SendAsync(object? request, Type requestType)
         {
             var completionSource = new TaskCompletionSource<(object?, RequestResult)>();
@@ -504,6 +531,7 @@ namespace PingPong.Engine
             var channel = Channel.CreateUnbounded<(TResponse?, RequestResult)>();
 
             OpenChannel<TRequest, TResponse>(
+                instanceId,
                 request, 
                 (response, result) => 
                 { 
@@ -556,7 +584,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send(false, callback);
+            selector.SelectConnection(_connections)?.Send<TRequest, TResponse>(false, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
@@ -605,7 +633,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send(false, callback);
+            selector.SelectConnection(_connections)?.Send<TRequest>(false, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback(result);
@@ -634,7 +662,7 @@ namespace PingPong.Engine
             if (conn == null)
                 throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
 
-            conn.Send(true, callback);
+            conn.Send<TRequest, TResponse>(true, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
@@ -691,7 +719,7 @@ namespace PingPong.Engine
             if (conn == null)
                 throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
 
-            conn.Send(true, callback);
+            conn.Send<TRequest>(true, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback(result);

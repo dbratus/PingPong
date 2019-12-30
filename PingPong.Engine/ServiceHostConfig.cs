@@ -38,7 +38,7 @@ namespace PingPong.Engine
         {
             public int ConnectionDelay { get; set; } = 3;
             public int ReconnectionDelay { get; set; } = 15;
-            public int InvokeCallbacksPeriodMs { get; set; } = 100;
+            public int InvokeCallbacksPeriodMs { get; set; } = 1;
             public int MaxRequestHoldTime { get; set; } = 600;
             public string Serializer { get; set; } = "PingPong.Engine.SerializerMessagePack";
         }

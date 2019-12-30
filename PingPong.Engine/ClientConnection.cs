@@ -411,11 +411,10 @@ namespace PingPong.Engine
             };
         }
 
-        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, Action<RequestResult> callback)
-            where TRequest: class 
-            where TResponse: class
+        public ClientConnection Send<TRequest>(bool instanceAffinity, Action<RequestResult> callback)
+            where TRequest: class
         {
-            ValidateSend(typeof(TRequest), typeof(TResponse));
+            ValidateSend(typeof(TRequest), null);
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.None, typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
@@ -426,11 +425,10 @@ namespace PingPong.Engine
             };
         }
 
-        public ClientConnection OpenChannel<TRequest, TResponse>(bool instanceAffinity, Action<RequestResult> callback)
+        public ClientConnection OpenChannel<TRequest>(bool instanceAffinity, Action<RequestResult> callback)
             where TRequest: class 
-            where TResponse: class
         {
-            ValidateSend(typeof(TRequest), typeof(TResponse));
+            ValidateSend(typeof(TRequest), null);
 
             _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.OpenChannel, typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);

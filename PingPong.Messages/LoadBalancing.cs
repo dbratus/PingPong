@@ -3,19 +3,22 @@ using MessagePack;
 namespace PingPong.Messages
 {
     [MessagePackObject]
-    public class AddRequest
-    {
-        [Key(0)]
-        public int Value { get; set; }
-    }
-
-    [MessagePackObject]
-    public class GetSummRequest
+    public class LoadBalancingInitRequest
     {
     }
 
     [MessagePackObject]
-    public class GetSummResponse
+    public class LoadBalancingRequest
+    {
+    }
+
+    [MessagePackObject]
+    public class LoadBalancingGetStatsRequest
+    {
+    }
+
+    [MessagePackObject]
+    public class LoadBalancingGetStatsResponse
     {
         [Key(0)]
         public int Result { get; set; }
