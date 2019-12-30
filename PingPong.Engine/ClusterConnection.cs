@@ -157,7 +157,7 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, typeof(TRequest), null, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, typeof(TRequest), null, null));
                 return;
             }
 
@@ -171,7 +171,7 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(instanceId, typeof(TRequest), null, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(instanceId, RequestFlags.None, typeof(TRequest), null, null));
                 return;
             }
 
@@ -189,7 +189,7 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, typeof(TRequest), request, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, typeof(TRequest), request, null));
                 return;
             }
 
@@ -202,12 +202,12 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(requestType, out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, requestType, request, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, requestType, request, null));
                 return;
             }
 
             selector.SelectConnection(_connections)?.Send(
-                new ClientConnection.RequestQueueEntry(-1, requestType, request, null)
+                new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, requestType, request, null)
             );
         }
 
@@ -218,7 +218,7 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(instanceId, typeof(TRequest), request, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(instanceId, RequestFlags.None, typeof(TRequest), request, null));
                 return;
             }
 
@@ -239,6 +239,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
                     InvlokeCallback
@@ -253,7 +254,32 @@ namespace PingPong.Engine
             };
         }
 
-        internal void Send(object? request, Type requestType, Action<object?, RequestResult> callback)
+        public void OpenChannel<TRequest, TResponse>(TRequest request, Action<TResponse?, RequestResult> callback)
+            where TRequest: class 
+            where TResponse: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    -1,
+                    RequestFlags.OpenChannel, 
+                    typeof(TRequest), 
+                    request, 
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            selector.SelectConnection(_connections)?.OpenChannel(false, request, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
+        }
+
+        internal void Send(object? request, Type requestType, RequestFlags flags, Action<object?, RequestResult> callback)
         {
             ValidateSend();
 
@@ -261,6 +287,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    flags, 
                     requestType, 
                     request, 
                     callback
@@ -270,6 +297,7 @@ namespace PingPong.Engine
 
             selector.SelectConnection(_connections)?.Send(new ClientConnection.RequestQueueEntry(
                 -1,
+                flags, 
                 requestType,
                 request, 
                 callback
@@ -285,6 +313,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
                     InvlokeCallback
@@ -309,6 +338,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     instanceId,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
                     InvlokeCallback
@@ -327,6 +357,35 @@ namespace PingPong.Engine
             };
         }
 
+        public void OpenChannel<TRequest, TResponse>(int instanceId, TRequest request, Action<TResponse?, RequestResult> callback)
+            where TRequest: class 
+            where TResponse: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    instanceId,
+                    RequestFlags.OpenChannel, 
+                    typeof(TRequest), 
+                    request, 
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
+            if (conn == null)
+                throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
+
+            conn.OpenChannel(true, request, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
+        }
+
         public void Send<TRequest>(int instanceId, TRequest request, Action<RequestResult> callback)
             where TRequest: class
         {
@@ -336,6 +395,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     instanceId,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
                     InvlokeCallback
@@ -375,10 +435,38 @@ namespace PingPong.Engine
             Send(
                 request, 
                 requestType,
+                RequestFlags.None,
                 (response, result) => completionSource.SetResult((response, result))
             );
 
             return completionSource.Task;
+        }
+
+        internal ChannelReader<(object?, RequestResult)> OpenChannelAsync(object? request, Type requestType)
+        {
+            var channel = Channel.CreateUnbounded<(object?, RequestResult)>();
+
+            Send(
+                request, 
+                requestType,
+                RequestFlags.OpenChannel,
+                (response, result) => 
+                { 
+                    if (response == null)
+                    {
+                        if (result != RequestResult.OK)
+                            channel.Writer.TryWrite((null, result));
+                        
+                        channel.Writer.Complete();
+                    }
+                    else
+                    {
+                        channel.Writer.TryWrite((response, result));
+                    }
+                }
+            );
+
+            return channel.Reader;
         }
 
         public Task<RequestResult> SendAsync<TRequest>(TRequest request)
@@ -409,6 +497,33 @@ namespace PingPong.Engine
             return completionSource.Task;
         }
 
+        public ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(int instanceId, TRequest request)
+            where TRequest: class 
+            where TResponse: class
+        {
+            var channel = Channel.CreateUnbounded<(TResponse?, RequestResult)>();
+
+            OpenChannel<TRequest, TResponse>(
+                request, 
+                (response, result) => 
+                { 
+                    if (response == null)
+                    {
+                        if (result != RequestResult.OK)
+                            channel.Writer.TryWrite((null, result));
+                        
+                        channel.Writer.Complete();
+                    }
+                    else
+                    {
+                        channel.Writer.TryWrite((response, result));
+                    }
+                }
+            );
+
+            return channel.Reader;
+        }
+
         public Task<RequestResult> SendAsync<TRequest>(int instanceId, TRequest request)
             where TRequest: class
         {
@@ -433,6 +548,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     null,
                     InvlokeCallback
@@ -441,6 +557,31 @@ namespace PingPong.Engine
             }
 
             selector.SelectConnection(_connections)?.Send(false, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
+        }
+
+        public void OpenChannel<TRequest, TResponse>(Action<TResponse?, RequestResult> callback)
+            where TRequest: class 
+            where TResponse: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    -1,
+                    RequestFlags.OpenChannel, 
+                    typeof(TRequest), 
+                    null,
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            selector.SelectConnection(_connections)?.OpenChannel<TRequest, TResponse>(false, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
@@ -456,6 +597,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     null,
                     InvlokeCallback
@@ -480,6 +622,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     instanceId,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     null,
                     InvlokeCallback
@@ -498,6 +641,35 @@ namespace PingPong.Engine
             };
         }
 
+        public void OpenChannel<TRequest, TResponse>(int instanceId, Action<TResponse?, RequestResult> callback)
+            where TRequest: class 
+            where TResponse: class
+        {
+            ValidateSend();
+
+            if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
+            {
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
+                    instanceId,
+                    RequestFlags.OpenChannel, 
+                    typeof(TRequest), 
+                    null,
+                    InvlokeCallback
+                ));
+                return;
+            }
+
+            ClientConnection? conn = selector.GetConnectionByInstanceId(_connections, instanceId);
+            if (conn == null)
+                throw new ProtocolException($"No connection for the instance {instanceId} and request type {typeof(TRequest).FullName}.");
+
+            conn.OpenChannel<TRequest, TResponse>(true, callback);
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
+        }
+
         public void Send<TRequest>(int instanceId, Action<RequestResult> callback)
             where TRequest: class
         {
@@ -507,6 +679,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     instanceId,
+                    RequestFlags.None, 
                     typeof(TRequest), 
                     null,
                     InvlokeCallback
@@ -538,6 +711,32 @@ namespace PingPong.Engine
             return completionSource.Task;
         }
 
+        public ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>()
+            where TRequest: class
+            where TResponse: class
+        {
+            var channel = Channel.CreateUnbounded<(TResponse?, RequestResult)>();
+
+            OpenChannel<TRequest, TResponse>(
+                (response, result) => 
+                { 
+                    if (response == null)
+                    {
+                        if (result != RequestResult.OK)
+                            channel.Writer.TryWrite((null, result));
+                        
+                        channel.Writer.Complete();
+                    }
+                    else
+                    {
+                        channel.Writer.TryWrite((response, result));
+                    }
+                }
+            );
+
+            return channel.Reader;
+        }
+
         public Task<RequestResult> SendAsync<TRequest>()
             where TRequest: class
         {
@@ -562,6 +761,33 @@ namespace PingPong.Engine
             );
             
             return completionSource.Task;
+        }
+
+        public ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(int instanceId)
+            where TRequest: class 
+            where TResponse: class
+        {
+            var channel = Channel.CreateUnbounded<(TResponse?, RequestResult)>();
+
+            OpenChannel<TRequest, TResponse>(
+                instanceId,
+                (response, result) => 
+                { 
+                    if (response == null)
+                    {
+                        if (result != RequestResult.OK)
+                            channel.Writer.TryWrite((null, result));
+                        
+                        channel.Writer.Complete();
+                    }
+                    else
+                    {
+                        channel.Writer.TryWrite((response, result));
+                    }
+                }
+            );
+
+            return channel.Reader;
         }
 
         public Task<RequestResult> SendAsync<TRequest>(int instanceId)

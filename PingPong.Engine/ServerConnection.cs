@@ -115,7 +115,7 @@ namespace PingPong.Engine
             _socket.Dispose();
         }
 
-        public async Task Serve()
+        public async Task Serve(Session session)
         {
             // Yield to get rid of the sync section.
             await Task.Yield();
@@ -150,9 +150,10 @@ namespace PingPong.Engine
             while (true)
             {
                 var requestHeader = await _messageReader.Read<RequestHeader>();
-                
                 if (requestHeader.MessageId == 0)
                     break;
+
+                session.SetRequestNo(requestHeader.RequestNo);
 
                 object? requestBody = null;
                 if ((requestHeader.Flags & RequestFlags.NoBody) == RequestFlags.None)
@@ -165,9 +166,16 @@ namespace PingPong.Engine
 
                 Task requestHandlerTask;
                 if ((requestHeader.Flags & RequestFlags.NoResponse) == RequestFlags.None)
-                    requestHandlerTask = HandleWithResponse(requestHeader, requestBody);
+                {
+                    if ((requestHeader.Flags & RequestFlags.OpenChannel) == RequestFlags.OpenChannel)
+                        requestHandlerTask = HandleChannel(requestHeader, requestBody);
+                    else
+                        requestHandlerTask = HandleWithResponse(requestHeader, requestBody);
+                }
                 else
+                {
                     requestHandlerTask = HandleWithoutResponse(requestHeader, requestBody);
+                }
                 
                 _requestHanderTasks.TryAdd(requestHandlerTask, null);
 
@@ -191,7 +199,7 @@ namespace PingPong.Engine
 
             try
             {
-                responseBody = await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+                responseBody = await _dispatcher.InvokeServiceMethod(requestHeader, requestBody);
 
                 if (responseBody == null)
                     responseFalgs |= ResponseFlags.NoBody;
@@ -200,7 +208,7 @@ namespace PingPong.Engine
             }
             catch (Exception)
             {
-                responseFalgs |= ResponseFlags.Error;
+                responseFalgs |= ResponseFlags.Error | ResponseFlags.NoBody;
                 throw;
             }
             finally
@@ -215,6 +223,55 @@ namespace PingPong.Engine
             }
         }
 
+        private async Task HandleChannel(RequestHeader requestHeader, object? requestBody)
+        {
+            await Task.Yield();
+
+            _counters.PendingProcessing.Decrement();
+            _counters.InProcessing.Increment();
+
+            var responseFalgs = ResponseFlags.None;
+            int messageId = -1;
+
+            try
+            {
+                do
+                {
+                    responseFalgs = ResponseFlags.None;
+
+                    object? responseBody = await _dispatcher.InvokeServiceMethod(requestHeader, requestBody);
+
+                    if (responseBody == null)
+                        responseFalgs |= ResponseFlags.NoBody;
+                    else
+                        messageId = _dispatcher.MessageMap.GetMessageIdByType(responseBody.GetType());
+
+                    _counters.PendingResponsePropagation.Increment();
+
+                    await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                        RequestNo = requestHeader.RequestNo,
+                        MessageId = messageId,
+                        Flags = responseFalgs
+                    }, responseBody));
+                
+                } while((responseFalgs & ResponseFlags.NoBody) == ResponseFlags.None);
+            }
+            catch (Exception)
+            {
+                responseFalgs |= ResponseFlags.Error | ResponseFlags.NoBody;
+
+                _counters.PendingResponsePropagation.Increment();
+
+                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                    RequestNo = requestHeader.RequestNo,
+                    MessageId = messageId,
+                    Flags = responseFalgs
+                }, null));
+
+                throw;
+            }
+        }
+
         private async Task HandleWithoutResponse(RequestHeader requestHeader, object? requestBody)
         {
             await Task.Yield();
@@ -222,7 +279,7 @@ namespace PingPong.Engine
             _counters.PendingProcessing.Decrement();
             _counters.InProcessing.Increment();
 
-            await _dispatcher.InvokeServiceMethod(requestHeader.MessageId, requestBody);
+            await _dispatcher.InvokeServiceMethod(requestHeader, requestBody);
         }
 
         private async void CompleteRequestHandlerTask(int requestNo, Task task)

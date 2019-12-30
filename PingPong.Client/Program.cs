@@ -65,6 +65,20 @@ namespace PingPong.Client
                 Message = "Published message"
             }, result => {});
 
+            connection.OpenChannel<StreamingRequest, StreamingResponse>((response, result) => {
+                if (result == RequestResult.OK)
+                {
+                    if (response != null)
+                        Console.WriteLine($"Value streamed {response.Value}.");
+                    else
+                        Console.WriteLine($"End of stream.");
+                }
+                else
+                {
+                    Console.WriteLine($"Streaming error.");
+                }
+            });
+
             while (connection.HasPendingRequests)
             {
                 connection.Update();
@@ -90,6 +104,20 @@ namespace PingPong.Client
                     Console.WriteLine($"Square response received from the gateway {arg}^2 = {response?.Result}");
                 });
             }
+
+            gateway.OpenChannel<StreamingRequest, StreamingResponse>((response, result) => {
+                if (result == RequestResult.OK)
+                {
+                    if (response != null)
+                        Console.WriteLine($"Value streamed through gateway {response.Value}.");
+                    else
+                        Console.WriteLine($"End of stream.");
+                }
+                else
+                {
+                    Console.WriteLine($"Streaming error.");
+                }
+            });
 
             while (gateway.HasPendingRequests)
             {

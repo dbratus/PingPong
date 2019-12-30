@@ -1,8 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 using Autofac;
 using PingPong.HostInterfaces;
@@ -123,12 +126,12 @@ namespace PingPong.Engine
         public IEnumerable<(int RequestId, int ResponseId)> GetRequestResponseMap() =>
             _requestResponseMessageMap.Select(kv => (kv.Key, kv.Value));
 
-        public Task<object?> InvokeServiceMethod(int messageId, object? request) =>
-            _messageHandlersById[messageId].Invoke(request);
+        public Task<object?> InvokeServiceMethod(RequestHeader header, object? request) =>
+            _messageHandlersById[header.MessageId].Invoke(header, request);
 
         private interface IRequestHanlder
         {
-            Task<object?> Invoke(object? request);
+            Task<object?> Invoke(RequestHeader header, object? request);
         }
 
         private abstract class RequestHandlerBase : IRequestHanlder
@@ -188,7 +191,7 @@ namespace PingPong.Engine
 
             public abstract Type? ResponseMessageType { get; }
 
-            public abstract Task<object?> Invoke(object? request);
+            public abstract Task<object?> Invoke(RequestHeader header, object? request);
         }
 
         private sealed class LinkedRequestHandler : IRequestHanlder
@@ -202,10 +205,10 @@ namespace PingPong.Engine
                 _tail = tail;
             }
 
-            public async Task<object?> Invoke(object? request)
+            public async Task<object?> Invoke(RequestHeader header, object? request)
             {
-                await _tail.Invoke(request);
-                return await _head.Invoke(request);
+                await _tail.Invoke(header, request);
+                return await _head.Invoke(header, request);
             }
         }
 
@@ -222,7 +225,7 @@ namespace PingPong.Engine
             public override Type? ResponseMessageType =>
                 null;
 
-            public override Task<object?> Invoke(object? request)
+            public override Task<object?> Invoke(RequestHeader header, object? request)
             {
                 var taskCompletion = new TaskCompletionSource<object?>();
 
@@ -274,7 +277,7 @@ namespace PingPong.Engine
             public override Type ResponseMessageType =>
                 _responseMessageType;
 
-            public override Task<object?> Invoke(object? request)
+            public override Task<object?> Invoke(RequestHeader header, object? request)
             {
                 var taskCompletion = new TaskCompletionSource<object?>();
                 
@@ -306,7 +309,7 @@ namespace PingPong.Engine
             public override Type? ResponseMessageType =>
                 _method.ReturnType.IsClass ? _method.ReturnType : null;
 
-            public override Task<object?> Invoke(object? request) =>
+            public override Task<object?> Invoke(RequestHeader header, object? request) =>
                 Task.FromResult<object?>(_serviceMethod(_serviceInstance.Value, request));
         }
 
@@ -323,7 +326,7 @@ namespace PingPong.Engine
             public override Type? ResponseMessageType =>
                 _method.ReturnType.IsClass ? _method.ReturnType : null;
 
-            public override Task<object?> Invoke(object? request)
+            public override Task<object?> Invoke(RequestHeader header, object? request)
             {
                 _serviceMethod(_serviceInstance.Value, request);
                 return Task.FromResult<object?>(null);
@@ -341,7 +344,7 @@ namespace PingPong.Engine
                 _requestType = requestType;
             }
 
-            public virtual Task<object?> Invoke(object? request)
+            public virtual Task<object?> Invoke(RequestHeader header, object? request)
             {
                 _clusterConnection.Send(request, _requestType);
                 return Task.FromResult<object?>(null);
@@ -350,19 +353,54 @@ namespace PingPong.Engine
 
         private sealed class RoutingRequestHandler : RoutingOneWayRequestHandler
         {
+            private static readonly ConcurrentDictionary<RequestHeader, ChannelReader<(object? Response, RequestResult Result)>> _currentChannels =
+                new ConcurrentDictionary<RequestHeader, ChannelReader<(object? Response, RequestResult Result)>>();
+
             public RoutingRequestHandler(ClusterConnection clusterConnection, Type requestType)
                 : base(clusterConnection, requestType)
             {
             }
 
-            public override async Task<object?> Invoke(object? request)
+            public override async Task<object?> Invoke(RequestHeader header, object? request)
             {
-                (object? response, RequestResult result) = await _clusterConnection.SendAsync(request, _requestType);
+                if ((header.Flags & RequestFlags.OpenChannel) == RequestFlags.OpenChannel)
+                {
+                    var channel = _currentChannels.GetOrAdd(header, h => 
+                        _clusterConnection.OpenChannelAsync(request, _requestType)
+                    );
 
-                if (result != RequestResult.OK)
-                    throw new CommunicationException($"Failed to route a message: ${result}.");
+                    try
+                    {
+                        (object? response, RequestResult result) = await channel.ReadAsync();
 
-                return response;
+                        if (result != RequestResult.OK)
+                        {
+                            _currentChannels.Remove(header, out channel);
+                            throw new CommunicationException($"Failed to route a message: ${result}.");
+                        }
+
+                        return response;
+                    }
+                    catch (ChannelClosedException)
+                    {
+                        _currentChannels.Remove(header, out channel);
+                        return null;
+                    }
+                    catch (Exception)
+                    {
+                        _currentChannels.Remove(header, out channel);
+                        throw;
+                    }
+                }
+                else
+                {
+                    (object? response, RequestResult result) = await _clusterConnection.SendAsync(request, _requestType);
+
+                    if (result != RequestResult.OK)
+                        throw new CommunicationException($"Failed to route a message: ${result}.");
+
+                    return response;
+                }
             }
         }
     }

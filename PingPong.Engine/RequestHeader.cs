@@ -21,6 +21,7 @@ namespace PingPong.Engine
     {
         None = 0,
         NoBody = 1,
-        NoResponse = 2
+        NoResponse = 1 << 1,
+        OpenChannel = 1 << 2
     }
 }

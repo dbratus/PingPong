@@ -84,6 +84,8 @@ namespace PingPong.Engine
 
                 LogDispatcher(dispatcher);
 
+                int nextConnectionId = 1;
+
                 while (true)
                 {
                     Socket connectionSocket;
@@ -99,7 +101,19 @@ namespace PingPong.Engine
 
                     _logger.Info("Client connected {0}.", ((IPEndPoint)connectionSocket.RemoteEndPoint).Address);
 
-                    ServeConnection(new ServerConnection(connectionSocket, dispatcher, config, counters, incomingSerializer, certificate), config, session);
+                    ServeConnection(
+                        new ServerConnection(
+                            connectionSocket, 
+                            dispatcher, 
+                            config, 
+                            counters, 
+                            incomingSerializer, 
+                            certificate
+                        ), 
+                        config, 
+                        session,
+                        nextConnectionId++
+                    );
                 }
 
                 _updateClusterConnection = false;
@@ -139,7 +153,7 @@ namespace PingPong.Engine
             };
         }
 
-        private async void ServeConnection(ServerConnection connection, ServiceHostConfig config, Session session)
+        private async void ServeConnection(ServerConnection connection, ServiceHostConfig config, Session session, int connectionId)
         {
             var clientRemoteAddress = ((IPEndPoint)connection.Socket.RemoteEndPoint).Address;
 
@@ -147,10 +161,11 @@ namespace PingPong.Engine
             {
                 session.SetData(new Session.Data {
                     InstanceId = config.InstanceId,
-                    ClientRemoteAddress = clientRemoteAddress
+                    ClientRemoteAddress = clientRemoteAddress,
+                    ConnectionId = connectionId
                 });
 
-                await connection.Serve();
+                await connection.Serve(session);
             }
             catch (Exception ex)
             {
