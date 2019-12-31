@@ -1,5 +1,6 @@
 using System;
 using System.Threading;
+using System.Threading.Tasks;
 using NLog;
 using NLog.Config;
 using NLog.Targets;
@@ -15,31 +16,78 @@ namespace PingPong.Client
         {
             InitLogging();
 
-            using var gateway = new ClusterConnection(new [] { 
-                "tls://localhost:10100",
-                "tls://localhost:10101" 
-            }, new ClusterConnectionSettings {
-                Serializer = new SerializerJson(),
+            string[] uris;
+            ISerializer serializer;
+
+            if (args.Length < 1 || args[0] == "cluster")
+            {
+                uris = new [] { 
+                    "tcp://localhost:10000",
+                    "tcp://localhost:10001" 
+                };
+                serializer = new SerializerMessagePack();
+            }
+            else if (args[0] == "gateway")
+            {
+                uris = new [] { 
+                    "tls://localhost:10100",
+                    "tls://localhost:10101" 
+                };
+                serializer = new SerializerJson();
+            }
+            else
+            {
+                return;
+            }
+
+            using var connection = new ClusterConnection(uris, new ClusterConnectionSettings {
+                Serializer = serializer,
                 TlsSettings = {
                     AllowSelfSignedCertificates = true
                 }
             });
 
-            gateway.Connect().Wait();
+            connection.Connect().Wait();
 
-            for (int i = 0; i < 10; ++i)
+            bool stop = false;
+
+            Console.CancelKeyPress += (sender, args) => {
+                Volatile.Write(ref stop, true);
+                args.Cancel = true;
+            };
+
+            Task updateTask = Task.Run(() => {
+                while (!stop)
+                {
+                    connection.Update();
+                    Thread.Yield();
+                }
+            });
+
+            int requestsProcessed = 0;
+            var started = DateTime.Now;
+
+            while (!stop)
             {
-                int arg = i;
-                gateway.Send(new SquareRequest { Value = arg }, (SquareResponse? response, RequestResult result) => {
-                    Console.WriteLine($"Square response received from the gateway {arg}^2 = {response?.Result}");
+                connection.Send<EchoMessage, EchoMessage>(new EchoMessage { Message = "Message" }, (response, result) => {
+                    if (result != RequestResult.OK)
+                    {
+                        Console.WriteLine($"Error {result}.");
+                        return;
+                    }
+
+                    Interlocked.Increment(ref requestsProcessed);
                 });
+                Thread.Yield();
             }
 
-            while (gateway.HasPendingRequests)
-            {
-                gateway.Update();
-                Thread.Sleep(1);
-            }
+            updateTask.Wait();
+
+            TimeSpan totalTime = DateTime.Now - started;
+            double requestsPerSec = requestsProcessed / totalTime.TotalSeconds;
+
+            Console.WriteLine();
+            Console.WriteLine($"{requestsProcessed} in {totalTime}. {requestsPerSec} requests per second");
 
             void InitLogging()
             {

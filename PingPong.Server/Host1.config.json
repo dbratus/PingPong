@@ -5,7 +5,7 @@
     "NLogConfigFile": "NLog.config.xml",
 
     "ServiceAssemblies": [
-        "../PingPong.Services/bin/Debug/netstandard2.1/PingPong.Services.dll"
+        "../PingPong.Services/bin/Release/netstandard2.1/PingPong.Services.dll"
     ],
 
     "KnownHosts": [
