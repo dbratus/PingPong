@@ -234,6 +234,8 @@ namespace PingPong.Test
 
             Task testTask = LoadBalancingTask(connection);
             WaitForTaskCompletion(connection, testTask, 10);
+
+            testTask.Wait();
         }
 
         private async Task LoadBalancingTask(ClusterConnection connection)
@@ -270,6 +272,35 @@ namespace PingPong.Test
             Assert.Equal(2, requestsHandled.Count);
             Assert.Equal(requestsCount, requestsHandled.Sum());
             Assert.True((double)Math.Abs(requestsHandled[0] - requestsHandled[1]) / requestsCount < 0.15);
+        }
+
+        [Fact]
+        public void ServiceCommunication()
+        {
+            using var connection = ConnectCluster();
+
+            Task testTask = ServiceCommunicationTask(connection);
+            WaitForTaskCompletion(connection, testTask, 10);
+
+            testTask.Wait();
+        }
+
+        private async Task ServiceCommunicationTask(ClusterConnection connection)
+        {
+            const string expectedMessage = "Test message";
+
+            (TransferMessageResponse? transferResponse, RequestResult transferResult) = 
+                await connection.SendAsync<TransferMessageRequest, TransferMessageResponse>(new TransferMessageRequest {
+                    Message = expectedMessage
+                });
+
+            Assert.Equal(RequestResult.OK, transferResult);
+
+            (GetTransferredMessageResponse? getResponse, RequestResult getResult) =
+                await connection.SendAsync<GetTransferredMessageRequest, GetTransferredMessageResponse>(transferResponse?.ServedByInstance ?? -1);
+
+            Assert.Equal(RequestResult.OK, getResult);
+            Assert.Equal(expectedMessage, getResponse?.Message ?? "");
         }
     }
 }
