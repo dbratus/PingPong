@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
+using PingPong.Engine.Messages;
 using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
@@ -151,19 +152,22 @@ namespace PingPong.Engine
 
         private readonly ClientTlsSettings _tlsSettings;
 
+        private readonly Dictionary<(long, long), Type> _messageHashMap;
+
         public ClientConnection(string uri) :
-            this(new RequestNoGenerator(), new ClientTlsSettings(), new SerializerMessagePack(), uri)
+            this(new RequestNoGenerator(), new ClientTlsSettings(), new SerializerMessagePack(), MessageName.FindMessageTypes(), uri)
         {
         }
 
         public ClientConnection(ClientTlsSettings tlsSettings, ISerializer serializer, string uri) :
-            this(new RequestNoGenerator(), tlsSettings, serializer, uri)
+            this(new RequestNoGenerator(), tlsSettings, serializer, MessageName.FindMessageTypes(), uri)
         {
         }
 
-        internal ClientConnection(RequestNoGenerator requestNoGenerator, ClientTlsSettings tlsSettings, ISerializer serializer, string uri)
+        internal ClientConnection(RequestNoGenerator requestNoGenerator, ClientTlsSettings tlsSettings, ISerializer serializer, Dictionary<(long, long), Type> messageHashMap, string uri)
         {
             _uri = uri;
+            _messageHashMap = messageHashMap;
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
 
             _net = new Lazy<Network>(() => {
@@ -263,9 +267,8 @@ namespace PingPong.Engine
 
                 foreach (MessageIdMapEntry ent in preamble.MessageIdMap)
                 {
-                    Type messageType = Type.GetType(ent.MessageType);
-                    if (messageType == null)
-                        throw new ProtocolException($"Message type not found '{ent.MessageType}'");
+                    if (!_messageHashMap.TryGetValue((ent.MessageTypeHashLo, ent.MessageTypeHashHi), out Type messageType))
+                        throw new ProtocolException($"Message type not found {MessageName.HashToString(ent.MessageTypeHashLo, ent.MessageTypeHashHi)}");
 
                     _messageMap.Add(messageType, ent.MessageId);
                 }

@@ -2,11 +2,14 @@ using System;
 using System.Buffers;
 using System.IO;
 using System.Threading.Tasks;
+using NLog;
 
 namespace PingPong.Engine
 {
     sealed class DelimitedMessageReader : IDisposable
     {
+        private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
+
         private readonly Stream _stream;
         private readonly Memory<byte> _messageSizeBuffer = 
             new Memory<byte>(new byte[1]);
@@ -44,7 +47,11 @@ namespace PingPong.Engine
                 totalBytesRead += bytesRead;
             }
 
-            return _serializer.Deserialize(type, messageMemory);
+            object result = _serializer.Deserialize(type, messageMemory);
+
+            _logger.Trace("Message read {0} '{1}'", messageSize, result.GetType().AssemblyQualifiedName);
+
+            return result;
         }
 
         private async Task<int> ReadMessageSize()

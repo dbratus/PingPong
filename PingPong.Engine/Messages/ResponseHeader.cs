@@ -1,10 +1,10 @@
 using System;
 using MessagePack;
 
-namespace PingPong.Engine
+namespace PingPong.Engine.Messages
 {
     [MessagePackObject]
-    public sealed class RequestHeader
+    public sealed class ResponseHeader
     {
         [Key(0)]
         public int RequestNo { get; set; }
@@ -13,15 +13,16 @@ namespace PingPong.Engine
         public int MessageId { get; set; }
 
         [Key(2)]
-        public RequestFlags Flags { get; set; }
+        public ResponseFlags Flags { get; set; }
     }
 
     [Flags]
-    public enum RequestFlags
+    public enum ResponseFlags
     {
         None = 0,
-        NoBody = 1,
-        NoResponse = 1 << 1,
-        OpenChannel = 1 << 2
+        Error = 1,
+        NoBody = 1 << 1,
+        Termination = 1 << 2,
+        HostStatus = 1 << 3
     }
 }

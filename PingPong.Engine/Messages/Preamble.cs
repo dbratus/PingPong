@@ -1,9 +1,9 @@
 using MessagePack;
 
-namespace PingPong.Engine
+namespace PingPong.Engine.Messages
 {
     [MessagePackObject]
-    public class Preamble
+    public sealed class Preamble
     {
         [Key(0)]
         public int InstanceId { get; set; } = -1;
@@ -16,17 +16,20 @@ namespace PingPong.Engine
     }
 
     [MessagePackObject]
-    public class MessageIdMapEntry
+    public sealed class MessageIdMapEntry
     {
         [Key(0)]
-        public string MessageType { get; set; } = "";
+        public long MessageTypeHashLo { get; set; }
 
         [Key(1)]
+        public long MessageTypeHashHi { get; set; }
+
+        [Key(2)]
         public int MessageId { get; set; }
     }
 
     [MessagePackObject]
-    public class RequestResponseMapEntry
+    public sealed class RequestResponseMapEntry
     {
         [Key(0)]
         public int RequestId { get; set; }

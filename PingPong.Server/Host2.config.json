@@ -8,6 +8,10 @@
         "AllowSelfSignedCertificates": true
     },
 
+    "MessageAssemblies": [
+        "../PingPong.Messages/bin/Debug/netstandard2.1/PingPong.Messages.dll"
+    ],
+
     "ServiceAssemblies": [
         "../PingPong.Services/bin/Release/netstandard2.1/PingPong.Services.dll"
     ],

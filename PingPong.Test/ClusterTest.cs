@@ -271,7 +271,7 @@ namespace PingPong.Test
 
             Assert.Equal(2, requestsHandled.Count);
             Assert.Equal(requestsCount, requestsHandled.Sum());
-            Assert.True((double)Math.Abs(requestsHandled[0] - requestsHandled[1]) / requestsCount < 0.15);
+            Assert.True((double)Math.Abs(requestsHandled[0] - requestsHandled[1]) / requestsCount < 0.25);
         }
 
         [Fact]

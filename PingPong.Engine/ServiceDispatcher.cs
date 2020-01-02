@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Autofac;
+using PingPong.Engine.Messages;
 using PingPong.HostInterfaces;
 
 namespace PingPong.Engine

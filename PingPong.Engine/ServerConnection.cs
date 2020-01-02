@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
+using PingPong.Engine.Messages;
 
 namespace PingPong.Engine
 {
@@ -129,9 +130,17 @@ namespace PingPong.Engine
                 MessageIdMap = _dispatcher
                     .MessageMap
                     .Enumerate()
-                    .Select(entry => new MessageIdMapEntry() {
-                        MessageType = entry.Type.AssemblyQualifiedName,
-                        MessageId = entry.Id
+                    .Select(entry => {
+                        string typeName = entry.Type.AssemblyQualifiedName;
+                        (long lo, long hi) = MessageName.GetHash(typeName);
+
+                        _logger.Trace("Hash {0} calculated for the message type '{1}'.", MessageName.HashToString(lo, hi), typeName);
+
+                        return new MessageIdMapEntry() {
+                            MessageTypeHashLo = lo,
+                            MessageTypeHashHi = hi,
+                            MessageId = entry.Id
+                        };
                     })
                     .ToArray(),
                 RequestResponseMap = _dispatcher

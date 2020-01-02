@@ -9,6 +9,6 @@
     </targets>
     <rules>
         <logger name="*" minLevel="Error" writeTo="consoleError" />
-        <logger name="*" minLevel="Trace" writeTo="consoleInfo" />
+        <logger name="*" minLevel="Info" writeTo="consoleInfo" />
     </rules>
 </nlog>

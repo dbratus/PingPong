@@ -6,6 +6,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
+using PingPong.Engine.Messages;
 using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
@@ -60,6 +61,8 @@ namespace PingPong.Engine
         private readonly ConcurrentQueue<EventCallbackJob> _eventCallbackJobs =
             new ConcurrentQueue<EventCallbackJob>();
 
+        private readonly Dictionary<(long, long), Type> _messageHashMap;
+
         public ClusterConnection(string[] uris) :
             this(uris, new ClusterConnectionSettings())
         {
@@ -70,6 +73,7 @@ namespace PingPong.Engine
             _settings = settings;
             _uris = uris;
             _connections = new ClientConnection?[uris.Length];
+            _messageHashMap = MessageName.FindMessageTypes();
         }
 
         public void Dispose()
@@ -99,7 +103,7 @@ namespace PingPong.Engine
 
             for (int i = 0; i < _connections.Length; ++i)
             {
-                var conn = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, _settings.Serializer, _uris[i]);
+                var conn = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, _settings.Serializer, _messageHashMap, _uris[i]);
                 
                 try
                 {
@@ -904,7 +908,7 @@ namespace PingPong.Engine
 
                 if (isConnectionBroken)
                 {
-                    var newConnection = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, _settings.Serializer, connection.Uri);
+                    var newConnection = new ClientConnection(_requestNoGenerator, _settings.TlsSettings, _settings.Serializer, _messageHashMap, connection.Uri);
                     Task connectionTask = newConnection.Connect(_settings.ReconnectionDelay);
                     
                     Volatile.Write(ref _connections[i], newConnection);

@@ -1,6 +1,6 @@
 using MessagePack;
 
-namespace PingPong.Engine
+namespace PingPong.Engine.Messages
 {
     [MessagePackObject]
     public sealed class HostStatusMessage

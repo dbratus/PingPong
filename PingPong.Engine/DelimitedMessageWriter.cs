@@ -4,11 +4,14 @@ using System.Buffers.Binary;
 using System.IO;
 using System.Threading.Tasks;
 using MessagePack;
+using NLog;
 
 namespace PingPong.Engine
 {
     sealed class DelimitedMessageWriter : IDisposable
     {
+        private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
+
         private readonly Stream _stream;
         private readonly ArrayBufferWriter<byte> _buffer = new ArrayBufferWriter<byte>();
         private readonly ISerializer _serializer;
@@ -27,15 +30,17 @@ namespace PingPong.Engine
             _serializer.Serialize(_buffer, message);
 
             ReadOnlyMemory<byte> messageMemory = _buffer.WrittenMemory;
-            ReadOnlyMemory<byte> messageSizeMemory = WriteMessageSize();
+            (int messageSize, ReadOnlyMemory<byte> messageSizeMemory) = WriteMessageSize();
 
             await _stream.WriteAsync(messageSizeMemory);
             await _stream.WriteAsync(messageMemory);
 
+            _logger.Trace("Message written {0} '{1}' {2}", messageSize, message.GetType().AssemblyQualifiedName, _serializer.GetType().Name);
+
             _buffer.Clear();
         }
 
-        private ReadOnlyMemory<byte> WriteMessageSize()
+        private (int, ReadOnlyMemory<byte>) WriteMessageSize()
         {
             // Message size is written as protobuf base 128 varint.
             // https://developers.google.com/protocol-buffers/docs/encoding#varints
@@ -66,7 +71,7 @@ namespace PingPong.Engine
 
             _buffer.Write(buff.Slice(0, varintLen));
             
-            return _buffer.WrittenMemory.Slice(messageSize, varintLen);
+            return (messageSize, _buffer.WrittenMemory.Slice(messageSize, varintLen));
         }
     }
 }
