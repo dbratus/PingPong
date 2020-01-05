@@ -53,10 +53,9 @@ namespace PingPong.Test
 
             for (int i = 0; i < requestCount; ++i)
             {
-                (SquareResponse? response, RequestResult result) = await connection
+                var response = await connection
                     .SendAsync<SquareRequest, SquareResponse>(new SquareRequest { Value = i });
 
-                Assert.Equal(RequestResult.OK, result);
                 Assert.Equal(i * i, response?.Result ?? 0);
             }
         }
@@ -120,25 +119,21 @@ namespace PingPong.Test
             const int requestCount = 10;
             int expectedSum = 0;
 
-            (InitSumResponse? initResponse, RequestResult initResult) = 
+            var initResponse = 
                 await connection.SendAsync<InitSumRequest, InitSumResponse>();
 
             int instanceId = initResponse?.InstanceId ?? -1;
             int counterId = initResponse?.CounterId ?? -1;
 
-            Assert.Equal(RequestResult.OK, initResult);
-
             for (int i = 0; i < requestCount; ++i)
             {
                 expectedSum += i;
-                RequestResult addResult = await connection.SendAsync(instanceId, new AddRequest { CounterId = counterId, Value = i });
-                Assert.Equal(RequestResult.OK, addResult);
+                await connection.SendAsync(instanceId, new AddRequest { CounterId = counterId, Value = i });
             }
 
-            (GetSumResponse? getResponse, RequestResult getResult) = 
+            var getResponse = 
                 await connection.SendAsync<GetSumRequest, GetSumResponse>(instanceId, new GetSumRequest { CounterId = counterId });
 
-            Assert.Equal(RequestResult.OK, getResult);
             Assert.Equal(expectedSum, getResponse?.Result ?? 0);
         }
 
@@ -157,25 +152,19 @@ namespace PingPong.Test
         {
             const string expectedMessage = "Test message";
 
-            RequestResult publishResult = 
-                await connection.SendAsync<PublishRequest>(new PublishRequest { Message = expectedMessage });
-
-            Assert.Equal(RequestResult.OK, publishResult);
-
+            await connection.SendAsync<PublishRequest>(new PublishRequest { Message = expectedMessage });
             await Task.Delay(TimeSpan.FromMilliseconds(500));
 
             for (int instanceId = 0; instanceId < 2; ++instanceId)
             {
-                (SubscriberOneGetMessageResponse? subscriberOneResponse, RequestResult subscriberOneResult) = 
+                var subscriberOneResponse = 
                     await connection.SendAsync<SubscriberOneGetMessageRequest, SubscriberOneGetMessageResponse>();
 
-                Assert.Equal(RequestResult.OK, subscriberOneResult);
                 Assert.Equal(expectedMessage, subscriberOneResponse?.Message ?? "");
 
-                (SubscriberTwoGetMessageResponse? subscriberTwoResponse, RequestResult subscriberTwoResult) = 
+                var subscriberTwoResponse = 
                     await connection.SendAsync<SubscriberTwoGetMessageRequest, SubscriberTwoGetMessageResponse>();
 
-                Assert.Equal(RequestResult.OK, subscriberTwoResult);
                 Assert.Equal(expectedMessage, subscriberTwoResponse?.Message ?? "");
             }
         }
@@ -241,29 +230,22 @@ namespace PingPong.Test
         private async Task LoadBalancingTask(ClusterConnection connection)
         {
             for (int instanceId = 0; instanceId < 2; ++instanceId)
-            {
-                RequestResult result = await connection.SendAsync<LoadBalancingInitRequest>(instanceId);
-                Assert.Equal(RequestResult.OK, result);
-            }
+                await connection.SendAsync<LoadBalancingInitRequest>(instanceId);
 
             const int requestsCount = 100;
 
             for (int i = 0; i < requestsCount; ++i)
-            {
-                RequestResult result = await connection.SendAsync<LoadBalancingRequest>();
-                Assert.Equal(RequestResult.OK, result);
-            }
+                await connection.SendAsync<LoadBalancingRequest>();
 
             var requestsHandled = new List<int>();
 
             for (int instanceId = 0; instanceId < 2; ++instanceId)
             {
-                (LoadBalancingGetStatsResponse? response, RequestResult result) = 
-                    await connection.SendAsync<LoadBalancingGetStatsRequest, LoadBalancingGetStatsResponse>(instanceId);
+                var response = await connection
+                    .SendAsync<LoadBalancingGetStatsRequest, LoadBalancingGetStatsResponse>(instanceId);
 
                 int value = response?.Result ?? 0;
 
-                Assert.Equal(RequestResult.OK, result);
                 Assert.True(value > 0);
 
                 requestsHandled.Add(value);
@@ -289,17 +271,14 @@ namespace PingPong.Test
         {
             const string expectedMessage = "Test message";
 
-            (TransferMessageResponse? transferResponse, RequestResult transferResult) = 
-                await connection.SendAsync<TransferMessageRequest, TransferMessageResponse>(new TransferMessageRequest {
+            var transferResponse = await connection
+                .SendAsync<TransferMessageRequest, TransferMessageResponse>(new TransferMessageRequest {
                     Message = expectedMessage
                 });
 
-            Assert.Equal(RequestResult.OK, transferResult);
+            var getResponse = await connection
+                .SendAsync<GetTransferredMessageRequest, GetTransferredMessageResponse>(transferResponse?.ServedByInstance ?? -1);
 
-            (GetTransferredMessageResponse? getResponse, RequestResult getResult) =
-                await connection.SendAsync<GetTransferredMessageRequest, GetTransferredMessageResponse>(transferResponse?.ServedByInstance ?? -1);
-
-            Assert.Equal(RequestResult.OK, getResult);
             Assert.Equal(expectedMessage, getResponse?.Message ?? "");
         }
     }

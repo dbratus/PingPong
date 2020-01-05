@@ -395,12 +395,7 @@ namespace PingPong.Engine
                 }
                 else
                 {
-                    (object? response, RequestResult result) = await _clusterConnection.SendAsync(request, _requestType);
-
-                    if (result != RequestResult.OK)
-                        throw new CommunicationException($"Failed to route a message: ${result}.");
-
-                    return response;
+                    return await _clusterConnection.SendAsync(request, _requestType);
                 }
             }
         }

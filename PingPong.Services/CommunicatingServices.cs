@@ -20,12 +20,9 @@ namespace PingPong.Services
         {
             _logger.Info("Transferring message '{0}'.", request.Message);
 
-            (var response, RequestResult result) = await _cluster.SendAsync<ReceiveMessageRequest, ReceiveMessageResponse>(new ReceiveMessageRequest {
+            var response = await _cluster.SendAsync<ReceiveMessageRequest, ReceiveMessageResponse>(new ReceiveMessageRequest {
                 Message = request.Message
             });
-
-            if (result != RequestResult.OK)
-                _logger.Error("Failed to transfer the message");
 
             return new TransferMessageResponse {
                 ServedByInstance = response?.ServedByInstance ?? -1

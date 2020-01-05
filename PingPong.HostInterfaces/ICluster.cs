@@ -6,32 +6,32 @@ namespace PingPong.HostInterfaces
     {
         void Send<TRequest>(TRequest request)
             where TRequest: class;
-        Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>(TRequest request)
+        Task<TResponse?> SendAsync<TRequest, TResponse>(TRequest request)
             where TRequest: class 
             where TResponse: class;
-        Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>()
+        Task<TResponse?> SendAsync<TRequest, TResponse>()
             where TRequest: class 
             where TResponse: class;
-        Task<RequestResult> SendAsync<TRequest>(TRequest request)
+        Task SendAsync<TRequest>(TRequest request)
             where TRequest: class;
-        Task<RequestResult> SendAsync<TRequest>()
+        Task SendAsync<TRequest>()
             where TRequest: class;
         void Send<TRequest>(int instanceId, TRequest request)
             where TRequest: class;
-        Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>(int instanceId, TRequest request)
+        Task<TResponse?> SendAsync<TRequest, TResponse>(int instanceId, TRequest request)
             where TRequest: class 
             where TResponse: class;
-        Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>(int instanceId)
+        Task<TResponse?> SendAsync<TRequest, TResponse>(int instanceId)
             where TRequest: class 
             where TResponse: class;
-        Task<RequestResult> SendAsync<TRequest>(int instanceId, TRequest request)
+        Task SendAsync<TRequest>(int instanceId, TRequest request)
             where TRequest: class;
-        Task<RequestResult> SendAsync<TRequest>(int instanceId)
+        Task SendAsync<TRequest>(int instanceId)
             where TRequest: class;
 
         void Publish<TEvent>(TEvent ev)
             where TEvent: class;
-        Task<RequestResult> PublishAsync<TEvent>(TEvent ev)
+        Task PublishAsync<TEvent>(TEvent ev)
             where TEvent: class;
     }
 }

@@ -21,12 +21,9 @@ namespace PingPong.Services
         {
             _logger.Info("Publishing request received '{0}'.", request.Message);
 
-            RequestResult result = await _cluster.PublishAsync(new PublisherEvent {
+            await _cluster.PublishAsync(new PublisherEvent {
                 Message = request.Message
             });
-
-            if (result != RequestResult.OK)
-                throw new Exception($"Publish failed {result}");
         }
     }
 

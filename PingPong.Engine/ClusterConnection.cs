@@ -418,15 +418,20 @@ namespace PingPong.Engine
             };
         }
 
-        public Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>(TRequest request)
+        public Task<TResponse?> SendAsync<TRequest, TResponse>(TRequest request)
             where TRequest: class 
             where TResponse: class
         {
-            var completionSource = new TaskCompletionSource<(TResponse?, RequestResult)>();
+            var completionSource = new TaskCompletionSource<TResponse?>();
 
             Send<TRequest, TResponse>(
                 request, 
-                (response, result) => completionSource.SetResult((response, result))
+                (response, result) =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(response);
+                }
             );
 
             return completionSource.Task;
@@ -459,15 +464,20 @@ namespace PingPong.Engine
             return channel.Reader;
         }
 
-        internal Task<(object?, RequestResult)> SendAsync(object? request, Type requestType)
+        internal Task<object?> SendAsync(object? request, Type requestType)
         {
-            var completionSource = new TaskCompletionSource<(object?, RequestResult)>();
+            var completionSource = new TaskCompletionSource<object?>();
 
             Send(
                 request, 
                 requestType,
                 RequestFlags.None,
-                (response, result) => completionSource.SetResult((response, result))
+                (response, result) =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(response);
+                }
             );
 
             return completionSource.Task;
@@ -500,29 +510,39 @@ namespace PingPong.Engine
             return channel.Reader;
         }
 
-        public Task<RequestResult> SendAsync<TRequest>(TRequest request)
+        public Task SendAsync<TRequest>(TRequest request)
             where TRequest: class
         {
             var completionSource = new TaskCompletionSource<RequestResult>();
 
             Send<TRequest>(
                 request, 
-                result => completionSource.SetResult(result)
+                result =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(result);
+                }
             );
 
             return completionSource.Task;
         }
 
-        public Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>(int instanceId, TRequest request)
+        public Task<TResponse?> SendAsync<TRequest, TResponse>(int instanceId, TRequest request)
             where TRequest: class 
             where TResponse: class
         {
-            var completionSource = new TaskCompletionSource<(TResponse?, RequestResult)>();
+            var completionSource = new TaskCompletionSource<TResponse?>();
 
             Send<TRequest, TResponse>(
                 instanceId, 
                 request, 
-                (response, result) => completionSource.SetResult((response, result))
+                (response, result) =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(response);
+                }
             );
 
             return completionSource.Task;
@@ -556,7 +576,7 @@ namespace PingPong.Engine
             return channel.Reader;
         }
 
-        public Task<RequestResult> SendAsync<TRequest>(int instanceId, TRequest request)
+        public Task SendAsync<TRequest>(int instanceId, TRequest request)
             where TRequest: class
         {
             var completionSource = new TaskCompletionSource<RequestResult>();
@@ -564,7 +584,12 @@ namespace PingPong.Engine
             Send<TRequest>(
                 instanceId, 
                 request, 
-                result => completionSource.SetResult(result)
+                result =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(result);
+                }
             );
 
             return completionSource.Task;
@@ -730,14 +755,19 @@ namespace PingPong.Engine
             };
         }
 
-        public Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>()
+        public Task<TResponse?> SendAsync<TRequest, TResponse>()
             where TRequest: class
             where TResponse: class
         {
-            var completionSource = new TaskCompletionSource<(TResponse?, RequestResult)>();
+            var completionSource = new TaskCompletionSource<TResponse?>();
             
             Send<TRequest, TResponse>(
-                (response, result) => completionSource.SetResult((response, result))
+                (response, result) =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(response);
+                }
             );
 
             return completionSource.Task;
@@ -769,27 +799,37 @@ namespace PingPong.Engine
             return channel.Reader;
         }
 
-        public Task<RequestResult> SendAsync<TRequest>()
+        public Task SendAsync<TRequest>()
             where TRequest: class
         {
             var completionSource = new TaskCompletionSource<RequestResult>();
             
             Send<TRequest>(
-                result => completionSource.SetResult(result)
+                result =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(result);
+                }
             );
 
             return completionSource.Task;
         }
 
-        public Task<(TResponse?, RequestResult)> SendAsync<TRequest, TResponse>(int instanceId)
+        public Task<TResponse?> SendAsync<TRequest, TResponse>(int instanceId)
             where TRequest: class 
             where TResponse: class
         {
-            var completionSource = new TaskCompletionSource<(TResponse?, RequestResult)>();
+            var completionSource = new TaskCompletionSource<TResponse?>();
             
             Send<TRequest, TResponse>(
                 instanceId,
-                (response, result) => completionSource.SetResult((response, result))
+                (response, result) =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(response);
+                }
             );
             
             return completionSource.Task;
@@ -822,14 +862,19 @@ namespace PingPong.Engine
             return channel.Reader;
         }
 
-        public Task<RequestResult> SendAsync<TRequest>(int instanceId)
+        public Task SendAsync<TRequest>(int instanceId)
             where TRequest: class
         {
             var completionSource = new TaskCompletionSource<RequestResult>();
             
             Send<TRequest>(
                 instanceId,
-                result => completionSource.SetResult(result)
+                result =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(result);
+                }
             );
             
             return completionSource.Task;
@@ -872,14 +917,19 @@ namespace PingPong.Engine
             _eventCallbackJobs.Enqueue(new EventCallbackJob(callback, resultsChannel, totalConfirmationsToWait));
         }
 
-        public Task<RequestResult> PublishAsync<TEvent>(TEvent ev)
+        public Task PublishAsync<TEvent>(TEvent ev)
             where TEvent: class
         {
             var completionSource = new TaskCompletionSource<RequestResult>();
             
             Publish<TEvent>(
                 ev,
-                result => completionSource.SetResult(result)
+                result =>  {
+                    if (result != RequestResult.OK)
+                        completionSource.SetException(new RequestResultException(result));
+                    else
+                        completionSource.SetResult(result);
+                }
             );
 
             return completionSource.Task;
