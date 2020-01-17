@@ -18,6 +18,8 @@ namespace PingPong.Engine
     sealed class ClientConnection : IDisposable
     {
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
+        private static readonly TimeSpan _propagatorCloseTimeout = TimeSpan.FromSeconds(30);
+        private static readonly TimeSpan _receiverCloseTimeout = TimeSpan.FromSeconds(30);
 
         private readonly string _uri;
         public string Uri =>
@@ -207,10 +209,10 @@ namespace PingPong.Engine
             if (_requestPropagatorTask != null)
             {
                 _requestChan.Writer.Complete();
-                _requestPropagatorTask.Wait();
+                _requestPropagatorTask.Wait(_propagatorCloseTimeout);
             }
 
-            _responseReceiverTask?.Wait();
+            _responseReceiverTask?.Wait(_receiverCloseTimeout);
 
             if (_net.IsValueCreated)
             {
@@ -570,6 +572,11 @@ namespace PingPong.Engine
                         if (nextRequest.Callback == null)
                             Interlocked.Decrement(ref _pendingRequestsCount);
                     }
+                    catch (ObjectDisposedException)
+                    {
+                        // The connection is being closed. The socket was disposed by timeout.
+                        return;
+                    }
                     catch
                     {
                         // Returning the request to the channel to prevent its loss in case of 
@@ -626,6 +633,11 @@ namespace PingPong.Engine
 
                     await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));
                 }
+            }
+            catch (ObjectDisposedException)
+            {
+                // The connection is being closed. The socket was disposed by timeout.
+                return;
             }
             catch (Exception ex)
             {

@@ -64,8 +64,12 @@ namespace PingPong.Client
                 }
             });
 
+            int requestsSent = 0;
             int requestsProcessed = 0;
+            const double maxPendingRequestsPct = 0.15;
             var started = DateTime.Now;
+
+            Console.WriteLine("Sending requests...");
 
             while (!stop)
             {
@@ -78,7 +82,18 @@ namespace PingPong.Client
 
                     Interlocked.Increment(ref requestsProcessed);
                 });
-                Thread.Yield();
+
+                ++requestsSent;
+
+                if (1.0 - (double)Volatile.Read(ref requestsProcessed)/requestsSent > maxPendingRequestsPct)
+                {
+                    while (!stop && Volatile.Read(ref requestsProcessed) < requestsSent)
+                        Thread.Sleep(1);
+                }
+                else
+                {
+                    Thread.Yield();
+                }
             }
 
             updateTask.Wait();
@@ -87,7 +102,7 @@ namespace PingPong.Client
             double requestsPerSec = requestsProcessed / totalTime.TotalSeconds;
 
             Console.WriteLine();
-            Console.WriteLine($"{requestsProcessed} in {totalTime}. {requestsPerSec} requests per second");
+            Console.WriteLine($"{requestsProcessed}/{requestsSent} {100.0*requestsProcessed/requestsSent:f0}% in {totalTime}. {requestsPerSec:f0} requests per second");
 
             void InitLogging()
             {
