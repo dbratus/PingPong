@@ -7,7 +7,7 @@ namespace PingPong.Engine.Messages
     public sealed class RequestHeader
     {
         [Key(0)]
-        public int RequestNo { get; set; }
+        public long RequestNo { get; set; }
 
         [Key(1)]
         public int MessageId { get; set; }

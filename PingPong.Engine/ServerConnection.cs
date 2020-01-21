@@ -291,7 +291,7 @@ namespace PingPong.Engine
             await _dispatcher.InvokeServiceMethod(requestHeader, requestBody);
         }
 
-        private async void CompleteRequestHandlerTask(int requestNo, Task task)
+        private async void CompleteRequestHandlerTask(long requestNo, Task task)
         {
             try
             {

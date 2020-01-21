@@ -4,9 +4,9 @@ namespace PingPong.Engine
 {
     sealed class RequestNoGenerator
     {
-        private int _nextRequestId;
+        private long _nextRequestId = 1;
 
-        public int GetNext() =>
+        public long GetNext() =>
             Interlocked.Increment(ref _nextRequestId);
     }
 }

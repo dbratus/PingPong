@@ -12,8 +12,8 @@ namespace PingPong.Services
     {
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
-        private static ConcurrentDictionary<(int, int), int> _counters = 
-            new ConcurrentDictionary<(int, int), int>();
+        private static ConcurrentDictionary<(int, long), int> _counters = 
+            new ConcurrentDictionary<(int, long), int>();
 
         private readonly ISession _session;
 

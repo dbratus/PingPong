@@ -6,7 +6,7 @@ namespace PingPong.HostInterfaces
     {
         int InstanceId { get; }
         int ConnectionId { get; }
-        int RequestNo { get; }
+        long RequestNo { get; }
         IPAddress ClientRemoteAddress { get; }
     }
 }

@@ -88,11 +88,11 @@ namespace PingPong.Engine
 
         private struct ResponseQueueEntry
         {
-            public readonly int RequestNo;
+            public readonly long RequestNo;
             public readonly object? Body;
             public readonly RequestResult Result;
 
-            public ResponseQueueEntry(int requestNo, object? body, RequestResult result)
+            public ResponseQueueEntry(long requestNo, object? body, RequestResult result)
             {
                 RequestNo = requestNo;
                 Body = body;
@@ -105,8 +105,8 @@ namespace PingPong.Engine
                 SingleReader = true
             });
 
-        private readonly ConcurrentDictionary<int, RequestQueueEntry> _requestsWaitingForResponse =
-            new ConcurrentDictionary<int, RequestQueueEntry>();
+        private readonly ConcurrentDictionary<long, RequestQueueEntry> _requestsWaitingForResponse =
+            new ConcurrentDictionary<long, RequestQueueEntry>();
 
         private int _pendingRequestsCount;
         public bool HasPendingRequests => 
@@ -546,7 +546,7 @@ namespace PingPong.Engine
                         break;
                     }
 
-                    int requestNo = _requestNoGenerator.GetNext();
+                    long requestNo = _requestNoGenerator.GetNext();
                     int messageId = _messageMap.GetMessageIdByType(nextRequest.Type);
                     RequestFlags flags = nextRequest.Flags;
 

@@ -14,7 +14,7 @@ namespace PingPong.Engine
         public int ConnectionId =>
             _data.Value.ConnectionId;
 
-        public int RequestNo =>
+        public long RequestNo =>
             _data.Value.RequestNo;
 
         public IPAddress ClientRemoteAddress =>
@@ -23,7 +23,7 @@ namespace PingPong.Engine
         public void SetData(Data data) =>
             _data.Value = data;
 
-        public void SetRequestNo(int requestId) =>
+        public void SetRequestNo(long requestId) =>
             _data.Value.RequestNo = requestId;
 
         public class Data
@@ -31,7 +31,7 @@ namespace PingPong.Engine
             public int InstanceId { get; set; } = -1;
             public IPAddress ClientRemoteAddress { get; set; } = IPAddress.Any;
             public int ConnectionId { get; set; }
-            public int RequestNo { get; set; }
+            public long RequestNo { get; set; }
         }
     }
 }
