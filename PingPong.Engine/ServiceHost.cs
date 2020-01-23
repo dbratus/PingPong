@@ -99,7 +99,7 @@ namespace PingPong.Engine
                         break;
                     }
 
-                    _logger.Info("Client connected {0}.", ((IPEndPoint)connectionSocket.RemoteEndPoint).Address);
+                    _logger.Info("Client connected {0}.", connectionSocket.GetRemoteAddressName());
 
                     ServeConnection(
                         new ServerConnection(

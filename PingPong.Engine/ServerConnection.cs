@@ -89,8 +89,8 @@ namespace PingPong.Engine
                 _tls = new TlsData(certificate, tlsStream);
             }
             
-            _messageReader = new DelimitedMessageReader(readerStream, serializer);
-            _messageWriter = new DelimitedMessageWriter(writerStream, serializer);
+            _messageReader = new DelimitedMessageReader(socket.GetRemoteAddressName(), readerStream, serializer);
+            _messageWriter = new DelimitedMessageWriter(socket.GetRemoteAddressName(), writerStream, serializer);
 
             _responsePropagatorTask = PropagateResponses();
             _counters = counters;

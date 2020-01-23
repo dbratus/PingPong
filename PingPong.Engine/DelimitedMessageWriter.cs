@@ -15,11 +15,13 @@ namespace PingPong.Engine
         private readonly Stream _stream;
         private readonly ArrayBufferWriter<byte> _buffer = new ArrayBufferWriter<byte>();
         private readonly ISerializer _serializer;
+        private readonly BinaryMessageLogger _messageLogger;
 
-        public DelimitedMessageWriter(Stream stream, ISerializer serializer)
+        public DelimitedMessageWriter(string endPointName, Stream stream, ISerializer serializer)
         {
             _stream = stream;
             _serializer = serializer;
+            _messageLogger = new BinaryMessageLogger(endPointName, true);
         }
 
         public void Dispose() =>
@@ -35,7 +37,7 @@ namespace PingPong.Engine
             await _stream.WriteAsync(messageSizeMemory);
             await _stream.WriteAsync(messageMemory);
 
-            _logger.Trace("Message written {0} '{1}' {2}", messageSize, message.GetType().AssemblyQualifiedName, _serializer.GetType().Name);
+            _messageLogger.Log(messageMemory);
 
             _buffer.Clear();
         }

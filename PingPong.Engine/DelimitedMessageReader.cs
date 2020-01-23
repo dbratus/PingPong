@@ -14,11 +14,13 @@ namespace PingPong.Engine
         private readonly Memory<byte> _messageSizeBuffer = 
             new Memory<byte>(new byte[1]);
         private readonly ISerializer _serializer;
+        private readonly BinaryMessageLogger _messageLogger;
         
-        public DelimitedMessageReader(Stream stream, ISerializer serializer)
+        public DelimitedMessageReader(string endPointName, Stream stream, ISerializer serializer)
         {
             _stream = stream;
             _serializer = serializer;
+            _messageLogger = new BinaryMessageLogger(endPointName, false);
         }
 
         public void Dispose() =>
@@ -49,7 +51,7 @@ namespace PingPong.Engine
 
             object result = _serializer.Deserialize(type, messageMemory);
 
-            _logger.Trace("Message read {0} '{1}'", messageSize, result.GetType().AssemblyQualifiedName);
+            _messageLogger.Log(messageMemory);
 
             return result;
         }

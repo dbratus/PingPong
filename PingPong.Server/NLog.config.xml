@@ -6,9 +6,13 @@
         <target type="Console" 
                 name="consoleInfo"
                 layout="${longdate}|${level:uppercase=true}|${var:instanceId}|${logger}|${message}" />
+        <target type="Console" 
+                name="consoleBinaryMessages"
+                layout="${longdate}|${message}" />
     </targets>
     <rules>
         <logger name="*" minLevel="Error" writeTo="consoleError" />
         <logger name="*" minLevel="Info" writeTo="consoleInfo" />
+        <!--<logger name="PingPong.Engine.BinaryMessageLogger" minLevel="Trace" maxLevel="Trace" writeTo="consoleBinaryMessages" />-->
     </rules>
 </nlog>

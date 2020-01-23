@@ -191,8 +191,8 @@ namespace PingPong.Engine
                         throw new ProtocolException($"Scheme '{uriBuilder.Scheme}' is not supported.");
                 }
 
-                var messageReader = new DelimitedMessageReader(readerStream, serializer);
-                var messageWriter = new DelimitedMessageWriter(writerStream, serializer);
+                var messageReader = new DelimitedMessageReader(uri, readerStream, serializer);
+                var messageWriter = new DelimitedMessageWriter(uri, writerStream, serializer);
 
                 return new Network(tlsStream, messageReader, messageWriter);
             });
