@@ -9,10 +9,14 @@
         <target type="Console" 
                 name="consoleBinaryMessages"
                 layout="${longdate}|${message}" />
+        <target type="Console" 
+                name="consoleRequests"
+                layout="${longdate}|${message}" />
     </targets>
     <rules>
         <logger name="*" minLevel="Error" writeTo="consoleError" />
         <logger name="*" minLevel="Info" writeTo="consoleInfo" />
         <!--<logger name="PingPong.Engine.BinaryMessageLogger" minLevel="Trace" maxLevel="Trace" writeTo="consoleBinaryMessages" />-->
+        <!--<logger name="PingPong.Engine.RequestLogger" minLevel="Trace" maxLevel="Trace" writeTo="consoleRequests" />-->
     </rules>
 </nlog>

@@ -63,6 +63,8 @@ namespace PingPong.Engine
         private readonly CancellationTokenSource _hostStatusSenderCancellation = 
             new CancellationTokenSource();
 
+        private readonly RequestLogger _requestLogger;
+
         public Socket Socket =>
             _socket;
 
@@ -71,6 +73,7 @@ namespace PingPong.Engine
             _dispatcher = dispatcher;
             _socket = socket;
             _config = config;
+            _requestLogger = new RequestLogger(socket.GetRemoteAddressName());
 
             Stream readerStream, writerStream;
 
@@ -170,6 +173,8 @@ namespace PingPong.Engine
                     Type requestType = _dispatcher.MessageMap.GetMessageTypeById(requestHeader.MessageId);
                     requestBody = await _messageReader.Read(requestType);
                 }
+
+                _requestLogger.Log(requestHeader, requestBody, false);
 
                 _counters.PendingProcessing.Increment();
 
@@ -331,16 +336,21 @@ namespace PingPong.Engine
                     if (nextResponse.Body != null)
                         await _messageWriter.Write(nextResponse.Body);
 
+                    _requestLogger.Log(nextResponse.Header, nextResponse.Body, true);
+
+                    _counters.PendingResponsePropagation.Decrement();
+
                     if ((nextResponse.Header.Flags & ResponseFlags.HostStatus) == ResponseFlags.HostStatus)
                     {
-                        await _messageWriter.Write(new HostStatusMessage {
+                        var hostStatus = new HostStatusMessage {
                             PendingProcessing = _counters.PendingProcessing.Count,
                             InProcessing = _counters.InProcessing.Count,
                             PendingResponsePropagation = _counters.PendingResponsePropagation.Count
-                        });
-                    }
+                        };
+                        await _messageWriter.Write(hostStatus);
 
-                    _counters.PendingResponsePropagation.Decrement();
+                        _requestLogger.Log(hostStatus, true);
+                    }
                 }
 
                 await _messageWriter.Write(new ResponseHeader{
@@ -365,6 +375,8 @@ namespace PingPong.Engine
                 {
                     break;
                 }
+
+                _counters.PendingResponsePropagation.Increment();
 
                 await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
                     Flags = ResponseFlags.HostStatus | ResponseFlags.NoBody

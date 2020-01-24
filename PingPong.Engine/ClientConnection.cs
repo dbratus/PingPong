@@ -156,6 +156,8 @@ namespace PingPong.Engine
 
         private readonly Dictionary<(long, long), Type> _messageHashMap;
 
+        private readonly RequestLogger _requestLogger;
+
         public ClientConnection(string uri) :
             this(new RequestNoGenerator(), new ClientTlsSettings(), new SerializerMessagePack(), MessageName.FindMessageTypes(), uri)
         {
@@ -171,6 +173,7 @@ namespace PingPong.Engine
             _uri = uri;
             _messageHashMap = messageHashMap;
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
+            _requestLogger = new RequestLogger(uri);
 
             _net = new Lazy<Network>(() => {
                 var uriBuilder = new UriBuilder(uri);
@@ -560,14 +563,17 @@ namespace PingPong.Engine
 
                     try
                     {
-                        await _net.Value.MessageWriter.Write(new RequestHeader {
+                        var header = new RequestHeader {
                             RequestNo = requestNo,
                             MessageId = messageId,
                             Flags = flags
-                        });
+                        };
+                        await _net.Value.MessageWriter.Write(header);
 
                         if (nextRequest.Body != null)
                             await _net.Value.MessageWriter.Write(nextRequest.Body);
+
+                        _requestLogger.Log(header, nextRequest.Body, true);
                         
                         if (nextRequest.Callback == null)
                             Interlocked.Decrement(ref _pendingRequestsCount);
@@ -607,11 +613,15 @@ namespace PingPong.Engine
                     var responseHeader = await _net.Value.MessageReader.Read<ResponseHeader>();
 
                     if ((responseHeader.Flags & ResponseFlags.Termination) == ResponseFlags.Termination)
+                    {
+                        _requestLogger.Log(responseHeader, null, false);
                         break;
+                    }
 
                     if ((responseHeader.Flags & ResponseFlags.Error) == ResponseFlags.Error)
                     {
                         await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, null, RequestResult.ServerError));
+                        _requestLogger.Log(responseHeader, null, false);
                         continue;
                     }
 
@@ -622,6 +632,8 @@ namespace PingPong.Engine
                         responseBody = await _net.Value.MessageReader.Read(responseType);
                     }
 
+                    _requestLogger.Log(responseHeader, responseBody, false);
+
                     if ((responseHeader.Flags & ResponseFlags.HostStatus) == ResponseFlags.HostStatus)
                     {
                         var hostStatusMessage = await _net.Value.MessageReader.Read<HostStatusMessage>();
@@ -629,6 +641,8 @@ namespace PingPong.Engine
                         _hostStatus.PendingProcessing = hostStatusMessage.PendingProcessing;
                         _hostStatus.InProcessing = hostStatusMessage.InProcessing;
                         _hostStatus.PendingResponsePropagation = hostStatusMessage.PendingResponsePropagation;
+
+                        _requestLogger.Log(hostStatusMessage, false);
                     }
 
                     await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));
