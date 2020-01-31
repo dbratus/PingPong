@@ -51,6 +51,7 @@ namespace PingPong.Engine
 
             object result = _serializer.Deserialize(type, messageMemory);
 
+            _messageLogger.Log(_messageSizeBuffer);
             _messageLogger.Log(messageMemory);
 
             return result;

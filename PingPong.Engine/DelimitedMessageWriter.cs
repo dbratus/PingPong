@@ -37,6 +37,7 @@ namespace PingPong.Engine
             await _stream.WriteAsync(messageSizeMemory);
             await _stream.WriteAsync(messageMemory);
 
+            _messageLogger.Log(messageSizeMemory);
             _messageLogger.Log(messageMemory);
 
             _buffer.Clear();

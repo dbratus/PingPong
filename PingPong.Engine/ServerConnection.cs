@@ -163,7 +163,10 @@ namespace PingPong.Engine
             {
                 var requestHeader = await _messageReader.Read<RequestHeader>();
                 if (requestHeader.MessageId == 0)
+                {
+                    _requestLogger.Log(requestHeader, null, false);
                     break;
+                }
 
                 session.SetRequestNo(requestHeader.RequestNo);
 

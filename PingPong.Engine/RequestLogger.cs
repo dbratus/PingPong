@@ -30,7 +30,7 @@ namespace PingPong.Engine
         {
             _logger.Trace(() => 
             {
-                var result = new StringBuilder($"Request {reqNo}:{messageId} with flags [{flags}] {GetAction(isSending)} {_endPointName}");
+                var result = new StringBuilder($"{messageKind} {reqNo}:{messageId} with flags [{flags}] {GetAction(isSending)} {_endPointName}");
 
                 if (body != null)
                 {
