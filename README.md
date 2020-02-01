@@ -181,7 +181,7 @@ The full call patterns for these methods are following:
 
 ```C#
 connection.Send<RequestMessage, ResponseMessage>(
-    instanceId, 
+    new DeliveryOptions { InstanceId = instanceId }, 
     request, 
     (ResponseMessage response, RquestResult result) => {
         ...
@@ -191,7 +191,7 @@ connection.Send<RequestMessage, ResponseMessage>(
 
 ```C#
 var response = 
-    await connection.Send<RequestMessage, ResponseMessage>(instanceId, request);
+    await connection.Send<RequestMessage, ResponseMessage>(new DeliveryOptions { InstanceId = instanceId }, request);
 ```
 
 Almost all parts of the call may be omitted if not required.
@@ -233,7 +233,7 @@ connection.Send<InitSumRequest, InitSumResponse>((response, result) => {
     int instanceId = response?.InstanceId ?? -1;
     int counterId = response?.CounterId ?? -1;
 
-    connection.Send(instanceId, new AddRequest { CounterId = counterId, Value = 1 });
+    connection.Send(new DeliveryOptions { InstanceId = instanceId }, new AddRequest { CounterId = counterId, Value = 1 });
 });
 ```
 
@@ -244,7 +244,7 @@ var initResponse =
 int instanceId = initResponse?.InstanceId ?? -1;
 int counterId = initResponse?.CounterId ?? -1;
 
-await connection.SendAsync(instanceId, new AddRequest { CounterId = counterId, Value = i });
+await connection.SendAsync(new DeliveryOptions { InstanceId = instanceId }, new AddRequest { CounterId = counterId, Value = i });
 ```
 
 ### Service communication using events

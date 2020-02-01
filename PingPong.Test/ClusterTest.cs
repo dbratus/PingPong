@@ -80,7 +80,15 @@ namespace PingPong.Test
                 for (int i = 0; i < requestCount; ++i)
                 {
                     expectedSum += i;
-                    connection.Send(instanceId, new AddRequest { CounterId = counterId, Value = i });
+                    connection.Send(
+                        new DeliveryOptions {
+                            InstanceId = instanceId
+                        }, 
+                        new AddRequest { 
+                            CounterId = counterId, 
+                            Value = i 
+                        }
+                    );
                 }
             });
 
@@ -93,7 +101,8 @@ namespace PingPong.Test
             {
                 Assert.True(DateTime.Now - startedAt < MaxTestTime);
 
-                connection.Send<GetSumRequest, GetSumResponse>(instanceId, new GetSumRequest { CounterId = counterId }, (response, result) => {
+                var options = new DeliveryOptions { InstanceId = instanceId };
+                connection.Send<GetSumRequest, GetSumResponse>(options, new GetSumRequest { CounterId = counterId }, (response, result) => {
                     Assert.Equal(RequestResult.OK, result);
 
                     receivedSumm = response?.Result ?? 0;
@@ -128,11 +137,14 @@ namespace PingPong.Test
             for (int i = 0; i < requestCount; ++i)
             {
                 expectedSum += i;
-                await connection.SendAsync(instanceId, new AddRequest { CounterId = counterId, Value = i });
+                await connection.SendAsync(new DeliveryOptions { InstanceId = instanceId }, new AddRequest { CounterId = counterId, Value = i });
             }
 
             var getResponse = 
-                await connection.SendAsync<GetSumRequest, GetSumResponse>(instanceId, new GetSumRequest { CounterId = counterId });
+                await connection.SendAsync<GetSumRequest, GetSumResponse>(
+                    new DeliveryOptions { InstanceId = instanceId }, 
+                    new GetSumRequest { CounterId = counterId }
+                );
 
             Assert.Equal(expectedSum, getResponse?.Result ?? 0);
         }
@@ -230,7 +242,7 @@ namespace PingPong.Test
         private async Task LoadBalancingTask(ClusterConnection connection)
         {
             for (int instanceId = 0; instanceId < 2; ++instanceId)
-                await connection.SendAsync<LoadBalancingInitRequest>(instanceId);
+                await connection.SendAsync<LoadBalancingInitRequest>(new DeliveryOptions { InstanceId = instanceId });
 
             const int requestsCount = 100;
 
@@ -242,7 +254,7 @@ namespace PingPong.Test
             for (int instanceId = 0; instanceId < 2; ++instanceId)
             {
                 var response = await connection
-                    .SendAsync<LoadBalancingGetStatsRequest, LoadBalancingGetStatsResponse>(instanceId);
+                    .SendAsync<LoadBalancingGetStatsRequest, LoadBalancingGetStatsResponse>(new DeliveryOptions { InstanceId = instanceId });
 
                 int value = response?.Result ?? 0;
 
@@ -276,8 +288,11 @@ namespace PingPong.Test
                     Message = expectedMessage
                 });
 
+            var options = new DeliveryOptions {
+                InstanceId = transferResponse?.ServedByInstance ?? -1
+            };
             var getResponse = await connection
-                .SendAsync<GetTransferredMessageRequest, GetTransferredMessageResponse>(transferResponse?.ServedByInstance ?? -1);
+                .SendAsync<GetTransferredMessageRequest, GetTransferredMessageResponse>(options);
 
             Assert.Equal(expectedMessage, getResponse?.Message ?? "");
         }

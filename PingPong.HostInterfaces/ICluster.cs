@@ -17,17 +17,17 @@ namespace PingPong.HostInterfaces
             where TRequest: class;
         Task SendAsync<TRequest>()
             where TRequest: class;
-        void Send<TRequest>(int instanceId, TRequest request)
+        void Send<TRequest>(DeliveryOptions options, TRequest request)
             where TRequest: class;
-        Task<TResponse?> SendAsync<TRequest, TResponse>(int instanceId, TRequest request)
+        Task<TResponse?> SendAsync<TRequest, TResponse>(DeliveryOptions options, TRequest request)
             where TRequest: class 
             where TResponse: class;
-        Task<TResponse?> SendAsync<TRequest, TResponse>(int instanceId)
+        Task<TResponse?> SendAsync<TRequest, TResponse>(DeliveryOptions options)
             where TRequest: class 
             where TResponse: class;
-        Task SendAsync<TRequest>(int instanceId, TRequest request)
+        Task SendAsync<TRequest>(DeliveryOptions options, TRequest request)
             where TRequest: class;
-        Task SendAsync<TRequest>(int instanceId)
+        Task SendAsync<TRequest>(DeliveryOptions options)
             where TRequest: class;
 
         void Publish<TEvent>(TEvent ev)
@@ -41,10 +41,10 @@ namespace PingPong.HostInterfaces
         ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(TRequest request)
             where TRequest: class 
             where TResponse: class;
-        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(int instanceId)
+        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(DeliveryOptions options)
             where TRequest: class 
             where TResponse: class;
-        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(int instanceId, TRequest request)
+        ChannelReader<(TResponse?, RequestResult)> OpenChannelAsync<TRequest, TResponse>(DeliveryOptions options, TRequest request)
             where TRequest: class 
             where TResponse: class;
     }

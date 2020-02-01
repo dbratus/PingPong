@@ -16,13 +16,13 @@ namespace PingPong.GatewayServices
 
         public async Task RouteAdd(AddRequestRouted request) =>
             await _cluster.SendAsync(
-                request.InstanceId, 
+                new DeliveryOptions { InstanceId = request.InstanceId }, 
                 new AddRequest { CounterId = request.CounterId, Value = request.Value }
             );
 
         public async Task<GetSumResponse> RouteGetSum(GetSumRequestRouted request) =>
             await _cluster.SendAsync<GetSumRequest, GetSumResponse>(
-                request.InstanceId,
+                new DeliveryOptions { InstanceId = request.InstanceId },
                 new GetSumRequest { CounterId = request.CounterId }
             ) ?? new GetSumResponse {};
     }
