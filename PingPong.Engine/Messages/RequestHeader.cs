@@ -1,5 +1,6 @@
 using System;
 using MessagePack;
+using PingPong.HostInterfaces;
 
 namespace PingPong.Engine.Messages
 {
@@ -14,6 +15,9 @@ namespace PingPong.Engine.Messages
 
         [Key(2)]
         public RequestFlags Flags { get; set; }
+
+        [Key(3)]
+        public MessagePriority Priority { get; set; }
     }
 
     [Flags]

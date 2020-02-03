@@ -11,6 +11,7 @@ using System.Threading.Channels;
 using System.Threading.Tasks;
 using NLog;
 using PingPong.Engine.Messages;
+using PingPong.HostInterfaces;
 
 namespace PingPong.Engine
 {
@@ -52,11 +53,8 @@ namespace PingPong.Engine
                 Body = body;
             }
         }
-        private readonly Channel<ResponseQueueEntry> _responseChan = 
-            Channel.CreateUnbounded<ResponseQueueEntry>(new UnboundedChannelOptions {
-                SingleReader = true,
-                SingleWriter = true
-            });
+        private readonly PriorityChannelSelector<ResponseQueueEntry> _responseChan = 
+            new PriorityChannelSelector<ResponseQueueEntry>();
         private readonly Task _responsePropagatorTask;
 
         private Task? _hostStatusSenderTask;
@@ -109,7 +107,7 @@ namespace PingPong.Engine
             _hostStatusSenderCancellation.Cancel();
             _hostStatusSenderTask?.Wait();
 
-            _responseChan.Writer.Complete();
+            _responseChan.WriteComplete();
             _responsePropagatorTask.Wait();
 
             _messageReader.Dispose();
@@ -232,7 +230,7 @@ namespace PingPong.Engine
             {
                 _counters.PendingResponsePropagation.Increment();
 
-                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                await _responseChan.WriteAsync(MessagePriority.Normal, new ResponseQueueEntry(new ResponseHeader {
                     RequestNo = requestHeader.RequestNo,
                     MessageId = messageId,
                     Flags = responseFalgs
@@ -265,7 +263,7 @@ namespace PingPong.Engine
 
                     _counters.PendingResponsePropagation.Increment();
 
-                    await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                    await _responseChan.WriteAsync(MessagePriority.Normal, new ResponseQueueEntry(new ResponseHeader {
                         RequestNo = requestHeader.RequestNo,
                         MessageId = messageId,
                         Flags = responseFalgs
@@ -279,7 +277,7 @@ namespace PingPong.Engine
 
                 _counters.PendingResponsePropagation.Increment();
 
-                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                await _responseChan.WriteAsync(MessagePriority.Normal, new ResponseQueueEntry(new ResponseHeader {
                     RequestNo = requestHeader.RequestNo,
                     MessageId = messageId,
                     Flags = responseFalgs
@@ -327,7 +325,7 @@ namespace PingPong.Engine
 
                     try
                     {
-                        nextResponse = await _responseChan.Reader.ReadAsync();
+                        nextResponse = await _responseChan.ReadAsync();
                     }
                     catch (ChannelClosedException)
                     {
@@ -357,6 +355,7 @@ namespace PingPong.Engine
                 }
 
                 await _messageWriter.Write(new ResponseHeader{
+                    Priority = MessagePriority.Highest,
                     Flags = ResponseFlags.Termination
                 });
             }
@@ -381,7 +380,8 @@ namespace PingPong.Engine
 
                 _counters.PendingResponsePropagation.Increment();
 
-                await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(new ResponseHeader {
+                await _responseChan.WriteAsync(MessagePriority.Normal, new ResponseQueueEntry(new ResponseHeader {
+                    Priority = MessagePriority.High,
                     Flags = ResponseFlags.HostStatus | ResponseFlags.NoBody
                 }, null));
             }

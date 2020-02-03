@@ -161,11 +161,11 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, typeof(TRequest), null, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, MessagePriority.Normal, RequestFlags.None, typeof(TRequest), null, null));
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send<TRequest>(false);
+            selector.SelectConnection(_connections)?.Send<TRequest>(false, MessagePriority.Normal);
         }
 
         public void Send<TRequest>(DeliveryOptions options)
@@ -175,13 +175,13 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(options.InstanceId, RequestFlags.None, typeof(TRequest), null, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(options.InstanceId, options.Priority, RequestFlags.None, typeof(TRequest), null, null));
                 return;
             }
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.Send<TRequest>(false);
+                selector.SelectConnection(_connections)?.Send<TRequest>(false, options.Priority);
             }
             else
             {
@@ -189,7 +189,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.Send<TRequest>(true);
+                conn.Send<TRequest>(true, options.Priority);
             }
         }
 
@@ -200,11 +200,11 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, typeof(TRequest), request, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, MessagePriority.Normal, RequestFlags.None, typeof(TRequest), request, null));
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send(false, request);
+            selector.SelectConnection(_connections)?.Send(false, MessagePriority.Normal, request);
         }
 
         internal void Send(object? request, Type requestType)
@@ -213,12 +213,12 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(requestType, out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, requestType, request, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(-1, MessagePriority.Normal, RequestFlags.None, requestType, request, null));
                 return;
             }
 
             selector.SelectConnection(_connections)?.Send(
-                new ClientConnection.RequestQueueEntry(-1, RequestFlags.None, requestType, request, null)
+                new ClientConnection.RequestQueueEntry(-1, MessagePriority.Normal, RequestFlags.None, requestType, request, null)
             );
         }
 
@@ -229,13 +229,13 @@ namespace PingPong.Engine
 
             if (!_routingMap.TryGetValue(typeof(TRequest), out ConnectionSelector selector))
             {
-                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(options.InstanceId, RequestFlags.None, typeof(TRequest), request, null));
+                _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(options.InstanceId, options.Priority, RequestFlags.None, typeof(TRequest), request, null));
                 return;
             }
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.Send(false, request);
+                selector.SelectConnection(_connections)?.Send(false, options.Priority, request);
             }
             else
             {
@@ -243,7 +243,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.Send(true, request);
+                conn.Send(true, options.Priority, request);
             }
         }
 
@@ -257,6 +257,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    MessagePriority.Normal,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
@@ -265,7 +266,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send(false, request, callback);
+            selector.SelectConnection(_connections)?.Send(false, MessagePriority.Normal, request, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
@@ -282,6 +283,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    MessagePriority.Normal,
                     RequestFlags.OpenChannel, 
                     typeof(TRequest), 
                     request, 
@@ -290,7 +292,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.OpenChannel(false, request, callback);
+            selector.SelectConnection(_connections)?.OpenChannel(false, MessagePriority.Normal, request, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
@@ -305,6 +307,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    MessagePriority.Normal,
                     flags, 
                     requestType, 
                     request, 
@@ -315,6 +318,7 @@ namespace PingPong.Engine
 
             selector.SelectConnection(_connections)?.Send(new ClientConnection.RequestQueueEntry(
                 -1,
+                MessagePriority.Normal,
                 flags, 
                 requestType,
                 request, 
@@ -331,6 +335,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    MessagePriority.Normal,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
@@ -339,7 +344,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send(false, request, callback);
+            selector.SelectConnection(_connections)?.Send(false, MessagePriority.Normal, request, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback(result);
@@ -356,6 +361,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     options.InstanceId,
+                    options.Priority,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
@@ -366,7 +372,7 @@ namespace PingPong.Engine
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.Send(false, request, callback);
+                selector.SelectConnection(_connections)?.Send(false, options.Priority, request, callback);
             }
             else
             {
@@ -374,7 +380,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.Send(true, request, callback);
+                conn.Send(true, options.Priority, request, callback);
             }
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
@@ -392,6 +398,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     options.InstanceId,
+                    options.Priority,
                     RequestFlags.OpenChannel, 
                     typeof(TRequest), 
                     request, 
@@ -402,7 +409,7 @@ namespace PingPong.Engine
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.OpenChannel<TRequest, TResponse>(false, callback);
+                selector.SelectConnection(_connections)?.OpenChannel<TRequest, TResponse>(false, options.Priority, callback);
             }
             else
             {
@@ -410,7 +417,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.OpenChannel(true, request, callback);
+                conn.OpenChannel(true, options.Priority, request, callback);
             }
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
@@ -427,6 +434,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     options.InstanceId,
+                    options.Priority,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     request, 
@@ -437,7 +445,7 @@ namespace PingPong.Engine
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.Send<TRequest>(false, callback);
+                selector.SelectConnection(_connections)?.Send<TRequest>(false, options.Priority, callback);
             }
             else
             {
@@ -445,7 +453,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.Send(true, request, callback);
+                conn.Send(true, options.Priority, request, callback);
             }
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
@@ -640,6 +648,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    MessagePriority.Normal,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     null,
@@ -648,7 +657,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send<TRequest, TResponse>(false, callback);
+            selector.SelectConnection(_connections)?.Send<TRequest, TResponse>(false, MessagePriority.Normal, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
@@ -665,6 +674,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    MessagePriority.Normal,
                     RequestFlags.OpenChannel, 
                     typeof(TRequest), 
                     null,
@@ -673,7 +683,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.OpenChannel<TRequest, TResponse>(false, callback);
+            selector.SelectConnection(_connections)?.OpenChannel<TRequest, TResponse>(false, MessagePriority.Normal, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback((TResponse?)responseBody, result);
@@ -689,6 +699,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     -1,
+                    MessagePriority.Normal,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     null,
@@ -697,7 +708,7 @@ namespace PingPong.Engine
                 return;
             }
 
-            selector.SelectConnection(_connections)?.Send<TRequest>(false, callback);
+            selector.SelectConnection(_connections)?.Send<TRequest>(false, MessagePriority.Normal, callback);
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
                 callback(result);
@@ -714,6 +725,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     options.InstanceId,
+                    options.Priority,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     null,
@@ -724,7 +736,7 @@ namespace PingPong.Engine
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.Send<TRequest, TResponse>(false, callback);
+                selector.SelectConnection(_connections)?.Send<TRequest, TResponse>(false, options.Priority, callback);
             }
             else
             {
@@ -732,7 +744,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.Send<TRequest, TResponse>(true, callback);
+                conn.Send<TRequest, TResponse>(true, options.Priority, callback);
             }
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
@@ -750,6 +762,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     options.InstanceId,
+                    options.Priority,
                     RequestFlags.OpenChannel, 
                     typeof(TRequest), 
                     null,
@@ -760,7 +773,7 @@ namespace PingPong.Engine
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.OpenChannel<TRequest, TResponse>(false, callback);
+                selector.SelectConnection(_connections)?.OpenChannel<TRequest, TResponse>(false, options.Priority, callback);
             }
             else
             {
@@ -768,7 +781,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.OpenChannel<TRequest, TResponse>(true, callback);
+                conn.OpenChannel<TRequest, TResponse>(true, options.Priority, callback);
             }
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
@@ -785,6 +798,7 @@ namespace PingPong.Engine
             {
                 _requestsOnHold.Enqueue(new ClientConnection.RequestQueueEntry(
                     options.InstanceId,
+                    options.Priority,
                     RequestFlags.None, 
                     typeof(TRequest), 
                     null,
@@ -795,7 +809,7 @@ namespace PingPong.Engine
 
             if (options.InstanceId < 0)
             {
-                selector.SelectConnection(_connections)?.Send<TRequest>(false, callback);
+                selector.SelectConnection(_connections)?.Send<TRequest>(false, options.Priority, callback);
             }
             else
             {
@@ -803,7 +817,7 @@ namespace PingPong.Engine
                 if (conn == null)
                     throw new ProtocolException($"No connection for the instance {options.InstanceId} and request type {typeof(TRequest).FullName}.");
 
-                conn.Send<TRequest>(true, callback);
+                conn.Send<TRequest>(true, options.Priority, callback);
             }
 
             void InvlokeCallback(object? responseBody, RequestResult result) {
@@ -945,7 +959,7 @@ namespace PingPong.Engine
                 return;
 
             foreach (ClientConnection? conn in selector.AllConnections(_connections))
-                conn?.Send(false, ev);
+                conn?.Send(false, MessagePriority.Normal, ev);
         }
 
         public void Publish<TEvent>(TEvent ev, Action<RequestResult> callback)
@@ -963,7 +977,7 @@ namespace PingPong.Engine
             int totalConfirmationsToWait = 0;
             foreach (ClientConnection? conn in selector.AllConnections(_connections))
             {
-                conn?.Send(false, ev, result => resultsChannel.Writer.TryWrite(result));
+                conn?.Send(false, MessagePriority.Normal, ev, result => resultsChannel.Writer.TryWrite(result));
                 ++totalConfirmationsToWait;
             }
 

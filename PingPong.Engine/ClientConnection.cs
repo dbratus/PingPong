@@ -63,15 +63,17 @@ namespace PingPong.Engine
         internal struct RequestQueueEntry
         {
             public readonly int InstanceId;
+            public readonly MessagePriority Priority;
             public readonly RequestFlags Flags;
             public readonly Type Type;
             public readonly object? Body;
             public readonly Action<object?, RequestResult>? Callback;
             public readonly DateTime CreationTime;
 
-            public RequestQueueEntry(int instanceId, RequestFlags flags, Type type, object? body, Action<object?, RequestResult>? callback)
+            public RequestQueueEntry(int instanceId, MessagePriority priority, RequestFlags flags, Type type, object? body, Action<object?, RequestResult>? callback)
             {
                 InstanceId = instanceId;
+                Priority = priority;
                 Flags = flags;
                 Type = type;
                 Body = body;
@@ -79,10 +81,8 @@ namespace PingPong.Engine
                 CreationTime = DateTime.Now;
             }
         }
-        private readonly Channel<RequestQueueEntry> _requestChan 
-            = Channel.CreateUnbounded<RequestQueueEntry>(new UnboundedChannelOptions {
-                SingleReader = true
-            });
+        private readonly PriorityChannelSelector<RequestQueueEntry> _requestChan =
+            new PriorityChannelSelector<RequestQueueEntry>();
 
         private Task? _responseReceiverTask;
 
@@ -99,11 +99,8 @@ namespace PingPong.Engine
                 Result = result;
             }
         }
-        private readonly Channel<ResponseQueueEntry> _responseChan 
-            = Channel.CreateUnbounded<ResponseQueueEntry>(new UnboundedChannelOptions {
-                SingleWriter = true,
-                SingleReader = true
-            });
+        private readonly PriorityChannelSelector<ResponseQueueEntry> _responseChan = 
+            new PriorityChannelSelector<ResponseQueueEntry>();
 
         private readonly ConcurrentDictionary<long, RequestQueueEntry> _requestsWaitingForResponse =
             new ConcurrentDictionary<long, RequestQueueEntry>();
@@ -211,7 +208,7 @@ namespace PingPong.Engine
 
             if (_requestPropagatorTask != null)
             {
-                _requestChan.Writer.Complete();
+                _requestChan.WriteComplete();
                 _requestPropagatorTask.Wait(_propagatorCloseTimeout);
             }
 
@@ -311,33 +308,33 @@ namespace PingPong.Engine
             return false;
         }
 
-        public ClientConnection Send<TRequest>(bool instanceAffinity) 
+        public ClientConnection Send<TRequest>(bool instanceAffinity, MessagePriority priority) 
             where TRequest: class
         {
             ValidateSend(typeof(TRequest), null);
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.None, typeof(TRequest), null, null));
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.None, typeof(TRequest), null, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
 
-        public ClientConnection Send<TRequest>(bool instanceAffinity, TRequest request)
+        public ClientConnection Send<TRequest>(bool instanceAffinity, MessagePriority priority, TRequest request)
             where TRequest: class
         {
             ValidateSend(typeof(TRequest), null);
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.None, typeof(TRequest), request, null));
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.None, typeof(TRequest), request, null));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
 
-        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, TRequest request, Action<TResponse?, RequestResult> callback)
+        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, MessagePriority priority, TRequest request, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
             ValidateSend(typeof(TRequest), typeof(TResponse));
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.None, typeof(TRequest), request, InvlokeCallback));
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.None, typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -346,13 +343,13 @@ namespace PingPong.Engine
             };
         }
 
-        public ClientConnection OpenChannel<TRequest, TResponse>(bool instanceAffinity, TRequest request, Action<TResponse?, RequestResult> callback)
+        public ClientConnection OpenChannel<TRequest, TResponse>(bool instanceAffinity, MessagePriority priority, TRequest request, Action<TResponse?, RequestResult> callback)
             where TRequest: class 
             where TResponse: class
         {
             ValidateSend(typeof(TRequest), typeof(TResponse));
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.OpenChannel, typeof(TRequest), request, InvlokeCallback));
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.OpenChannel, typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -361,26 +358,12 @@ namespace PingPong.Engine
             };
         }
 
-        public ClientConnection Send<TRequest>(bool instanceAffinity, TRequest request, Action<RequestResult> callback)
+        public ClientConnection Send<TRequest>(bool instanceAffinity, MessagePriority priority, TRequest request, Action<RequestResult> callback)
             where TRequest: class
         {
             ValidateSend(typeof(TRequest), null);
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.None, typeof(TRequest), request, InvlokeCallback));
-            Interlocked.Increment(ref _pendingRequestsCount);
-            return this;
-
-            void InvlokeCallback(object? responseBody, RequestResult result) {
-                callback(result);
-            };
-        }
-
-        public ClientConnection OpenChannel<TRequest>(bool instanceAffinity, TRequest request, Action<RequestResult> callback)
-            where TRequest: class
-        {
-            ValidateSend(typeof(TRequest), null);
-
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.OpenChannel, typeof(TRequest), request, InvlokeCallback));
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.None, typeof(TRequest), request, InvlokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -389,42 +372,56 @@ namespace PingPong.Engine
             };
         }
 
-        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, Action<TResponse?, RequestResult> callback)
-            where TRequest: class 
-            where TResponse: class
-        {
-            ValidateSend(typeof(TRequest), typeof(TResponse));
-
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.None, typeof(TRequest), null, InvokeCallback));
-            Interlocked.Increment(ref _pendingRequestsCount);
-            return this;
-
-            void InvokeCallback(object? responseBody, RequestResult result) {
-                callback((TResponse?)responseBody, result);
-            };
-        }
-
-        public ClientConnection OpenChannel<TRequest, TResponse>(bool instanceAffinity, Action<TResponse?, RequestResult> callback)
-            where TRequest: class 
-            where TResponse: class
-        {
-            ValidateSend(typeof(TRequest), typeof(TResponse));
-
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.OpenChannel, typeof(TRequest), null, InvokeCallback));
-            Interlocked.Increment(ref _pendingRequestsCount);
-            return this;
-
-            void InvokeCallback(object? responseBody, RequestResult result) {
-                callback((TResponse?)responseBody, result);
-            };
-        }
-
-        public ClientConnection Send<TRequest>(bool instanceAffinity, Action<RequestResult> callback)
+        public ClientConnection OpenChannel<TRequest>(bool instanceAffinity, MessagePriority priority, TRequest request, Action<RequestResult> callback)
             where TRequest: class
         {
             ValidateSend(typeof(TRequest), null);
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.None, typeof(TRequest), null, InvokeCallback));
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.OpenChannel, typeof(TRequest), request, InvlokeCallback));
+            Interlocked.Increment(ref _pendingRequestsCount);
+            return this;
+
+            void InvlokeCallback(object? responseBody, RequestResult result) {
+                callback(result);
+            };
+        }
+
+        public ClientConnection Send<TRequest, TResponse>(bool instanceAffinity, MessagePriority priority, Action<TResponse?, RequestResult> callback)
+            where TRequest: class 
+            where TResponse: class
+        {
+            ValidateSend(typeof(TRequest), typeof(TResponse));
+
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.None, typeof(TRequest), null, InvokeCallback));
+            Interlocked.Increment(ref _pendingRequestsCount);
+            return this;
+
+            void InvokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
+        }
+
+        public ClientConnection OpenChannel<TRequest, TResponse>(bool instanceAffinity, MessagePriority priority, Action<TResponse?, RequestResult> callback)
+            where TRequest: class 
+            where TResponse: class
+        {
+            ValidateSend(typeof(TRequest), typeof(TResponse));
+
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.OpenChannel, typeof(TRequest), null, InvokeCallback));
+            Interlocked.Increment(ref _pendingRequestsCount);
+            return this;
+
+            void InvokeCallback(object? responseBody, RequestResult result) {
+                callback((TResponse?)responseBody, result);
+            };
+        }
+
+        public ClientConnection Send<TRequest>(bool instanceAffinity, MessagePriority priority, Action<RequestResult> callback)
+            where TRequest: class
+        {
+            ValidateSend(typeof(TRequest), null);
+
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.None, typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -433,12 +430,12 @@ namespace PingPong.Engine
             };
         }
 
-        public ClientConnection OpenChannel<TRequest>(bool instanceAffinity, Action<RequestResult> callback)
+        public ClientConnection OpenChannel<TRequest>(bool instanceAffinity, MessagePriority priority, Action<RequestResult> callback)
             where TRequest: class 
         {
             ValidateSend(typeof(TRequest), null);
 
-            _requestChan.Writer.TryWrite(new RequestQueueEntry(instanceAffinity ? _instanceId : -1, RequestFlags.OpenChannel, typeof(TRequest), null, InvokeCallback));
+            _requestChan.Write(priority, new RequestQueueEntry(instanceAffinity ? _instanceId : -1, priority, RequestFlags.OpenChannel, typeof(TRequest), null, InvokeCallback));
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
 
@@ -451,7 +448,7 @@ namespace PingPong.Engine
         {
             ValidateSend(request.Type, null);
 
-            _requestChan.Writer.TryWrite(request);
+            _requestChan.Write(request.Priority, request);
             Interlocked.Increment(ref _pendingRequestsCount);
             return this;
         }
@@ -493,7 +490,7 @@ namespace PingPong.Engine
             if (!(status == ClientConnectionStatus.Active || status == ClientConnectionStatus.Broken))
                 throw new InvalidOperationException($"Invalid connection status {status}.");
 
-            while (_responseChan.Reader.TryRead(out ResponseQueueEntry response))
+            while (_responseChan.TryRead(out ResponseQueueEntry response))
             {
                 if (_requestsWaitingForResponse.TryRemove(response.RequestNo, out RequestQueueEntry request))
                 {
@@ -518,7 +515,7 @@ namespace PingPong.Engine
 
         internal IEnumerable<RequestQueueEntry> ConsumePendingRequests()
         {
-            while (_requestChan.Reader.TryRead(out RequestQueueEntry request))
+            while (_requestChan.TryRead(out RequestQueueEntry request))
                 yield return request;
 
             foreach (RequestQueueEntry request in _requestsWaitingForResponse.Values)
@@ -542,7 +539,7 @@ namespace PingPong.Engine
 
                     try
                     {
-                        nextRequest = await _requestChan.Reader.ReadAsync();
+                        nextRequest = await _requestChan.ReadAsync();
                     }
                     catch (ChannelClosedException)
                     {
@@ -587,12 +584,12 @@ namespace PingPong.Engine
                     {
                         // Returning the request to the channel to prevent its loss in case of 
                         // network failures.
-                        _requestChan.Writer.TryWrite(nextRequest);
+                        _requestChan.Write(nextRequest.Priority, nextRequest);
                         throw;
                     }
                 }
 
-                await _net.Value.MessageWriter.Write(new RequestHeader{});
+                await _net.Value.MessageWriter.Write(new RequestHeader{ Priority = MessagePriority.Highest });
             }
             catch (Exception ex)
             {
@@ -620,7 +617,7 @@ namespace PingPong.Engine
 
                     if ((responseHeader.Flags & ResponseFlags.Error) == ResponseFlags.Error)
                     {
-                        await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, null, RequestResult.ServerError));
+                        await _responseChan.WriteAsync(responseHeader.Priority, new ResponseQueueEntry(responseHeader.RequestNo, null, RequestResult.ServerError));
                         _requestLogger.Log(responseHeader, null, false);
                         continue;
                     }
@@ -645,7 +642,7 @@ namespace PingPong.Engine
                         _requestLogger.Log(hostStatusMessage, false);
                     }
 
-                    await _responseChan.Writer.WriteAsync(new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));
+                    await _responseChan.WriteAsync(responseHeader.Priority, new ResponseQueueEntry(responseHeader.RequestNo, responseBody, RequestResult.OK));
                 }
             }
             catch (ObjectDisposedException)
