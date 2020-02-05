@@ -296,5 +296,35 @@ namespace PingPong.Test
 
             Assert.Equal(expectedMessage, getResponse?.Message ?? "");
         }
+
+        [Fact]
+        public void Priorities()
+        {
+            using var connection = ConnectCluster();
+
+            var priorities = new MessagePriority[] {
+                MessagePriority.Highest,
+                MessagePriority.High,
+                MessagePriority.Normal,
+                MessagePriority.Low,
+                MessagePriority.Lowest
+            };
+            var rng = new Random();
+            var responses = new List<int>();
+
+            for (int i = 0; i < 100; ++i)
+            {
+                var options = new DeliveryOptions {
+                    Priority = priorities[rng.Next(priorities.Length)]
+                };
+                connection.Send(options, new PriorityRequest { Priority = 2 + (int)options.Priority }, (PriorityResponse ?response, RequestResult result) => {
+                    responses.Add(response?.Priority ?? -1);
+                });
+            }
+
+            WaitForPendingRequests(connection);
+
+            Assert.Equal(100, responses.Count);
+        }
     }
 }
