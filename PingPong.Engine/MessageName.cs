@@ -26,7 +26,7 @@ namespace PingPong.Engine
         }
 
         public static string HashToString(long lo, long hi) =>
-            hi.ToString("X") + lo.ToString("X");
+            hi.ToString("X16") + "-" + lo.ToString("X16");
 
         public static Dictionary<(long, long), Type> FindMessageTypes()
         {
