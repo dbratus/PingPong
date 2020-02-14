@@ -11,10 +11,12 @@ namespace PingPong.Engine
         private static ILogger _logger = LogManager.GetCurrentClassLogger();
 
         private readonly string _endPointName;
+        private readonly MessageMap _messageMap;
 
-        public RequestLogger(string endPointName)
+        public RequestLogger(string endPointName, MessageMap messageMap)
         {
             _endPointName = endPointName;
+            _messageMap = messageMap;
         }
 
         public void Log(RequestHeader header, object? body, bool isSending) =>
@@ -30,12 +32,13 @@ namespace PingPong.Engine
         {
             _logger.Trace(() => 
             {
-                var result = new StringBuilder($"{messageKind} {reqNo}:{messageId} with flags [{flags}] {GetAction(isSending)} {_endPointName}");
+                Type messageType = _messageMap.GetMessageTypeById(messageId);
+
+                var result = new StringBuilder($"{messageKind} {reqNo} [{messageType.FullName}] with flags [{flags}] {GetAction(isSending)} {_endPointName}");
 
                 if (body != null)
                 {
                     result.AppendLine();
-                    result.AppendLine("[" + body.GetType().FullName + "]");
 
                     try
                     {

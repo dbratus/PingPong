@@ -170,7 +170,7 @@ namespace PingPong.Engine
             _uri = uri;
             _messageHashMap = messageHashMap;
             _socket = new Socket(SocketType.Stream, ProtocolType.IP);
-            _requestLogger = new RequestLogger(uri);
+            _requestLogger = new RequestLogger(uri, _messageMap);
 
             _net = new Lazy<Network>(() => {
                 var uriBuilder = new UriBuilder(uri);

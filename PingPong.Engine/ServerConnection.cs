@@ -71,7 +71,7 @@ namespace PingPong.Engine
             _dispatcher = dispatcher;
             _socket = socket;
             _config = config;
-            _requestLogger = new RequestLogger(socket.GetRemoteAddressName());
+            _requestLogger = new RequestLogger(socket.GetRemoteAddressName(), dispatcher.MessageMap);
 
             Stream readerStream, writerStream;
 
