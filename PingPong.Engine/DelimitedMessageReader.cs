@@ -49,12 +49,10 @@ namespace PingPong.Engine
                 totalBytesRead += bytesRead;
             }
 
-            object result = _serializer.Deserialize(type, messageMemory);
-
             _messageLogger.Log(_messageSizeBuffer);
             _messageLogger.Log(messageMemory);
 
-            return result;
+            return _serializer.Deserialize(type, messageMemory);
         }
 
         private async Task<int> ReadMessageSize()

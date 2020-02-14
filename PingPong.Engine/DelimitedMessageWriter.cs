@@ -34,11 +34,11 @@ namespace PingPong.Engine
             ReadOnlyMemory<byte> messageMemory = _buffer.WrittenMemory;
             (int messageSize, ReadOnlyMemory<byte> messageSizeMemory) = WriteMessageSize();
 
-            await _stream.WriteAsync(messageSizeMemory);
-            await _stream.WriteAsync(messageMemory);
-
             _messageLogger.Log(messageSizeMemory);
             _messageLogger.Log(messageMemory);
+
+            await _stream.WriteAsync(messageSizeMemory);
+            await _stream.WriteAsync(messageMemory);
 
             _buffer.Clear();
         }

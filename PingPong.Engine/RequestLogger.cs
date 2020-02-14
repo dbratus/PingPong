@@ -35,6 +35,7 @@ namespace PingPong.Engine
                 if (body != null)
                 {
                     result.AppendLine();
+                    result.AppendLine("[" + body.GetType().FullName + "]");
 
                     try
                     {
