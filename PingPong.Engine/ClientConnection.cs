@@ -589,7 +589,10 @@ namespace PingPong.Engine
                     }
                 }
 
-                await _net.Value.MessageWriter.Write(new RequestHeader{ Priority = MessagePriority.Highest });
+                await _net.Value.MessageWriter.Write(new RequestHeader{ 
+                    Priority = MessagePriority.Highest,
+                    Flags = RequestFlags.NoBody
+                });
             }
             catch (Exception ex)
             {
