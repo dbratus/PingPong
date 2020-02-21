@@ -8,6 +8,8 @@ namespace PingPong.Engine
 {
     sealed class DelimitedMessageReader : IDisposable
     {
+        private const int MaxMessageSize = 1024 * 1024 * 4;
+
         private static readonly ILogger _logger = LogManager.GetCurrentClassLogger();
 
         private readonly Stream _stream;
@@ -63,6 +65,7 @@ namespace PingPong.Engine
             int size = 0;
             int offset = 0;
             const int highBit = 0x80;
+            const int maxOffset = (64 / 7) * 7;
 
             while (true)
             {
@@ -81,8 +84,14 @@ namespace PingPong.Engine
                 {
                     size |= (nextByte & ~highBit) << offset;
                     offset += 7;
+
+                    if (offset > maxOffset)
+                        throw new ProtocolException("Message size has invalid format.");
                 }
             }
+
+            if (size > MaxMessageSize)
+                throw new ProtocolException($"Maximum message size {MaxMessageSize} exceeded.");
 
             return size;
         }
